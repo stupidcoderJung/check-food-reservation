@@ -36,6 +36,15 @@ function money(n) {
   return Number(n || 0).toLocaleString("ko-KR");
 }
 
+// 뒷자리 문자열을 해시해서 일관된 파스텔 배경색 생성
+function phoneColor(phone) {
+  const s = String(phone || "0000");
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return `hsl(${hue}, 65%, 88%)`;
+}
+
 function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -178,11 +187,19 @@ async function loadSnapshots() {
 async function loadActive(date) {
   setBusy(true, "데이터 불러오는 중…");
   try {
-    const r = await apiGet({ action: "list", ...(date ? { date } : {}) });
-    HEADERS = r.headers || [];
-    ROWS = (r.rows || []).map(normalize);
-    ACTIVE_DATE = r.date || ACTIVE_DATE;
-    PERIOD_TEXT = ROWS[0]?.["수령기간"] || "";
+    if (date === "__ALL__") {
+      const r = await apiGet({ action: "globalList" });
+      HEADERS = r.headers || [];
+      ROWS = (r.rows || []).map(normalize);
+      ACTIVE_DATE = "__ALL__";
+      PERIOD_TEXT = "";
+    } else {
+      const r = await apiGet({ action: "list", ...(date ? { date } : {}) });
+      HEADERS = r.headers || [];
+      ROWS = (r.rows || []).map(normalize);
+      ACTIVE_DATE = r.date || ACTIVE_DATE;
+      PERIOD_TEXT = ROWS[0]?.["수령기간"] || "";
+    }
     updatePeriodBadge();
     _loaded = true;
   } finally {
@@ -220,12 +237,13 @@ function formatSnapshotLabel(id) {
 function refreshSnapshotPicker() {
   const sel = $("#snapshotPicker");
   if (!sel) return;
-  // 최신이 위로 오도록 정렬 역순
   const sorted = SNAPSHOTS.slice().sort().reverse();
-  sel.innerHTML = sorted.map(d =>
+  const allOpt = `<option value="__ALL__" ${ACTIVE_DATE === "__ALL__" ? "selected" : ""}>🌐 전체 스냅샷</option>`;
+  const opts = sorted.map(d =>
     `<option value="${escapeHtml(d)}" ${d === ACTIVE_DATE ? "selected" : ""}>${escapeHtml(formatSnapshotLabel(d))}</option>`
   ).join("");
-  sel.disabled = SNAPSHOTS.length <= 1;
+  sel.innerHTML = allOpt + opts;
+  sel.disabled = false;
 }
 
 // ---------- 상태 변경 (API 호출) ----------
@@ -400,6 +418,11 @@ function renderLookup() {
     return;
   }
 
+  // 전체 스냅샷 모드: 스냅샷별로 섹션 분리 렌더
+  if (ACTIVE_DATE === "__ALL__") {
+    return renderLookupGlobal(container, phone, items);
+  }
+
   // 중복: 같은 뒷자리인데 원본순번이 다른 경우 → 주문 블록별 선택
   const orderSeqs = [...new Set(items.map(i => i["원본순번"]))];
   if (orderSeqs.length > 1 && selectedOrderSeq == null) {
@@ -487,6 +510,56 @@ function renderLookup() {
   bindCardActions(container);
 }
 
+function renderLookupGlobal(container, phone, items) {
+  // 스냅샷별 섹션
+  const bySnap = {};
+  items.forEach(r => {
+    (bySnap[r["_스냅샷"] || "(미지정)"] ||= []).push(r);
+  });
+  const snaps = Object.keys(bySnap).sort().reverse();
+  const totalCount = items.length;
+  const done = items.filter(i => statusOf(i) === "수령완료").length;
+  const cancelled = items.filter(i => statusOf(i) === "취소됨").length;
+  const totalAmt = items
+    .filter(i => statusOf(i) !== "취소됨")
+    .reduce((s, i) => s + Number(i["품목금액"] || 0), 0);
+
+  const header = `
+    <div class="customer-header">
+      <div>
+        <div class="who">뒷자리 ${escapeHtml(phone)} · 🌐 전체 스냅샷</div>
+        <div class="meta">총 ${totalCount}건 · 수령 ${done}/${totalCount - cancelled}${cancelled ? ` · 취소 ${cancelled}` : ""} · ${money(totalAmt)}원</div>
+        <div class="meta">${snaps.length}개 스냅샷에서 발견</div>
+      </div>
+    </div>
+  `;
+
+  const sections = snaps.map(sn => {
+    const group = bySnap[sn];
+    const gDone = group.filter(i => statusOf(i) === "수령완료").length;
+    const gPending = group.filter(i => statusOf(i) === "예약중").length;
+    const gAmt = group.filter(i => statusOf(i) !== "취소됨").reduce((s, i) => s + Number(i["품목금액"] || 0), 0);
+    return `
+      <details class="pending-group" ${gPending > 0 ? "open" : ""}>
+        <summary>
+          <span class="caret">▸</span>
+          <div class="name-block">
+            <div class="name">${escapeHtml(formatSnapshotLabel(sn))} <span style="color:var(--muted);font-size:13px;font-weight:600">(${group.length}건)</span></div>
+            <div class="sub">수령 ${gDone}/${group.length - group.filter(i => statusOf(i) === "취소됨").length} · ${money(gAmt)}원</div>
+          </div>
+          ${gPending > 0 ? `<span class="chip-tag warn">미수령 ${gPending}</span>` : `<span class="chip-tag success">완료</span>`}
+        </summary>
+        <div class="items">
+          ${group.map(itemCard).join("")}
+        </div>
+      </details>
+    `;
+  }).join("");
+
+  container.innerHTML = header + `<div class="result" style="margin-top:12px">${sections}</div>`;
+  bindCardActions(container);
+}
+
 function bindCardActions(root) {
   $$("[data-action]", root).forEach(btn => {
     btn.addEventListener("click", () => {
@@ -509,17 +582,16 @@ const PENDING_FILTER = { seg: "all" };
 
 function renderPending() {
   const pendingAll = ROWS.filter(r => statusOf(r) === "예약중");
-  const due = parsePeriodDueDate(PERIOD_TEXT);
-  const diffOf = () => due ? daysBetween(today(), due) : null;
-  const d = diffOf();
+  const diffOfRow = r => {
+    const due = parsePeriodDueDate(r["수령기간"]);
+    return due ? daysBetween(today(), due) : null;
+  };
 
-  // 수령기간 1개만 존재하므로 한 주 안에선 모든 건이 같은 D-day
-  // 세그먼트 분류는 해당 주의 수령 마지막일 기준
   const counts = {
     all: pendingAll.length,
-    overdue: d !== null && d < 0 ? pendingAll.length : 0,
-    today: d === 0 ? pendingAll.length : 0,
-    future: d !== null && d > 0 ? pendingAll.length : 0,
+    overdue: pendingAll.filter(r => { const d = diffOfRow(r); return d !== null && d < 0; }).length,
+    today: pendingAll.filter(r => diffOfRow(r) === 0).length,
+    future: pendingAll.filter(r => { const d = diffOfRow(r); return d !== null && d > 0; }).length,
   };
 
   const setCount = (id, n) => {
@@ -537,9 +609,9 @@ function renderPending() {
   });
 
   let pending = pendingAll;
-  if (PENDING_FILTER.seg === "overdue" && !(d !== null && d < 0)) pending = [];
-  else if (PENDING_FILTER.seg === "today" && d !== 0) pending = [];
-  else if (PENDING_FILTER.seg === "future" && !(d !== null && d > 0)) pending = [];
+  if (PENDING_FILTER.seg === "overdue") pending = pending.filter(r => { const d = diffOfRow(r); return d !== null && d < 0; });
+  else if (PENDING_FILTER.seg === "today") pending = pending.filter(r => diffOfRow(r) === 0);
+  else if (PENDING_FILTER.seg === "future") pending = pending.filter(r => { const d = diffOfRow(r); return d !== null && d > 0; });
 
   const container = $("#pendingResult");
   if (!pending.length) {
@@ -558,11 +630,13 @@ function renderPending() {
     return;
   }
 
-  // 뒷자리+원본순번 그룹
+  // 스냅샷+뒷자리+원본순번 그룹 (전역 모드에서도 동일 뒷자리가 다른 주 스냅샷이면 분리)
   const groups = {};
   pending.forEach(r => {
-    const key = `${r["뒷자리"]}-${r["원본순번"]}`;
+    const snap = r["_스냅샷"] || ACTIVE_DATE || "";
+    const key = `${snap}|${r["뒷자리"]}-${r["원본순번"]}`;
     (groups[key] ||= {
+      snap,
       phone: r["뒷자리"],
       seq: r["원본순번"],
       items: [],
@@ -571,12 +645,16 @@ function renderPending() {
 
   const keys = Object.keys(groups).sort((a, b) => {
     const ga = groups[a]; const gb = groups[b];
+    // 스냅샷 내림차순 우선, 그 안에서 순번 오름차순
+    if (ga.snap !== gb.snap) return gb.snap.localeCompare(ga.snap);
     return ga.seq - gb.seq;
   });
 
   container.innerHTML = keys.map(k => {
     const g = groups[k];
-    const gd = due ? daysBetween(today(), due) : null;
+    const firstItem = g.items[0];
+    const gDue = parsePeriodDueDate(firstItem["수령기간"]);
+    const gd = gDue ? daysBetween(today(), gDue) : null;
     let klass = "pending-group";
     let statusTag;
     if (gd === null) statusTag = `<span class="chip-tag">수령기간 없음</span>`;
@@ -585,13 +663,16 @@ function renderPending() {
     else statusTag = `<span class="chip-tag">D-${gd}</span>`;
 
     const totalAmt = g.items.reduce((s, i) => s + Number(i["품목금액"] || 0), 0);
+    const snapBadge = ACTIVE_DATE === "__ALL__"
+      ? `<div class="snap-badge">${escapeHtml(formatSnapshotLabel(g.snap))}</div>` : "";
 
     return `
       <details class="${klass}" ${gd !== null && gd <= 0 ? "open" : ""}>
         <summary>
           <span class="caret">▸</span>
           <div class="name-block">
-            <div class="name">뒷자리 ${escapeHtml(g.phone)} · 주문 #${g.seq} <span style="color:var(--muted);font-size:13px;font-weight:600">(${g.items.length}품목)</span></div>
+            ${snapBadge}
+            <div class="name"><span class="phone-pill">${escapeHtml(g.phone)}</span> · 주문 #${g.seq} <span style="color:var(--muted);font-size:13px;font-weight:600">(${g.items.length}품목)</span></div>
             <div class="sub">${money(totalAmt)}원</div>
           </div>
           ${statusTag}
@@ -609,7 +690,7 @@ function renderPending() {
 // ---------- 전체 시트 탭 ----------
 const SHEET_STATE = { sortKey: null, sortDir: 1, query: "" };
 const NUMERIC_COLS = new Set(["수량", "단가", "품목금액", "원본순번", "예약내품목순서", "행합계수량"]);
-const SHEET_HIDDEN_COLS = new Set(["예약번호", "원본순번", "예약내품목순서", "원본뒷자리", "원본품목", "행합계수량"]);
+const SHEET_HIDDEN_COLS = new Set(["예약번호", "예약내품목순서", "원본뒷자리", "원본품목", "행합계수량"]);
 const EDITABLE_SHEET_COLS = new Set(["예약상태", "수량", "비고"]);
 const STATUS_OPTIONS = ["예약중", "수령완료", "취소됨"];
 
@@ -669,6 +750,9 @@ function renderSheet() {
       }
       if (h === "비고") {
         return `<td class="${cls.trim()}"><input type="text" class="cell-edit" data-field="비고" value="${escapeHtml(v)}" placeholder="—" /></td>`;
+      }
+      if (h === "뒷자리") {
+        return `<td class="${cls.trim()}"><span class="phone-pill" style="background:${phoneColor(v)}">${escapeHtml(v)}</span></td>`;
       }
       return `<td class="${cls.trim()}">${escapeHtml(v)}</td>`;
     }).join("") + "</tr>";

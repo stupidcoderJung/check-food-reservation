@@ -630,6 +630,28 @@ main { padding: 14px; max-width: 860px; margin: 0 auto; }
 .sheet tbody tr:hover th:first-child,
 .sheet tbody tr:hover td:first-child { background: #f1f5f9; }
 
+.phone-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 800;
+  color: #1f2937;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+  background: #e0e7ff;
+  border: 1px solid rgba(0,0,0,.05);
+}
+.snap-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+  padding: 2px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
 .sheet td.pickup-y { color: var(--success); font-weight: 700; }
 .sheet td.pickup-n { color: var(--danger); font-weight: 700; }
 .sheet td.status-cancel { color: var(--muted); font-weight: 700; }

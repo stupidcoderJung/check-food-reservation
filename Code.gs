@@ -77,6 +77,18 @@ function doGet(e) {
       const data = readSnapshot(date);
       return json({ ok: true, date, headers: SCHEMA, rows: data });
     }
+    if (action === 'globalList') {
+      // 모든 스냅샷 병합. 각 행에 _스냅샷 필드 추가
+      const snaps = listSnapshots();
+      const all = [];
+      snaps.forEach(d => {
+        readSnapshot(d).forEach(r => {
+          r['_스냅샷'] = d;
+          all.push(r);
+        });
+      });
+      return json({ ok: true, headers: SCHEMA.concat(['_스냅샷']), rows: all, snapshots: snaps, active: getActiveSnapshotDate() });
+    }
     return json({ ok: false, error: 'unknown action: ' + action });
   } catch (err) {
     return json({ ok: false, error: String(err), stack: err.stack });
@@ -95,6 +107,8 @@ function doPost(e) {
     if (action === 'cancel') return json({ ok: true, row: setStatus(body.id, '취소됨', 'N') });
     if (action === 'restore') return json({ ok: true, row: setStatus(body.id, '예약중', 'N') });
     if (action === 'update') return json({ ok: true, row: updateCell(body.id, body.field, body.value) });
+    if (action === 'seedHistorical') return json({ ok: true, ...seedHistorical() });
+    if (action === 'clearSeeded') return json({ ok: true, ...clearSeeded() });
     return json({ ok: false, error: 'unknown action: ' + action });
   } catch (err) {
     return json({ ok: false, error: String(err), stack: err.stack });
@@ -731,6 +745,82 @@ function debugImport() {
  *   파싱은 하지 않고 앵커만 빠르게 검증할 때 사용.
  *   원본 구조가 바뀌었을 때 "어디에서 실패하는지"를 즉시 확인.
  */
+// ──────────────── Eval용 시딩 ────────────────
+// 과거 날짜 가상의 스냅샷을 생성 (원본 시트는 건드리지 않음, 현재 탭도 건드리지 않음)
+// 동일 파일 내 _AppStatus_* 탭 중 '_seed_' 태그가 붙은 것만 clear가 삭제
+function seedHistorical() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const { orders } = parseSource();
+  const staff = ['박미선', '최지훈', '이재현', '김서연'];
+  const scenarios = [
+    // (snapshotId, 수령률, 취소비율, 수령기간, 기간오프셋(일))
+    { id: '2026-04-05',            pickupRate: 1.00, cancelRate: 0.00, period: '4/6~7 월화 수령',   dayOffset: -14, tag: 'seed_all_done' },
+    { id: '2026-04-12',            pickupRate: 0.85, cancelRate: 0.05, period: '4/13~14 월화 수령', dayOffset: -7,  tag: 'seed_mostly_done' },
+    { id: '2026-04-12_추가입고',   pickupRate: 0.60, cancelRate: 0.10, period: '4/13~14 월화 수령', dayOffset: -7,  tag: 'seed_mixed' },
+    { id: '2026-04-19_eval',       pickupRate: 0.30, cancelRate: 0.03, period: '4/20~21 월화 수령', dayOffset: 0,   tag: 'seed_in_progress' },
+  ];
+  const created = [];
+  scenarios.forEach(sc => {
+    const tabName = APP_STATUS_PREFIX + sc.id;
+    const existing = ss.getSheetByName(tabName);
+    if (existing) ss.deleteSheet(existing);
+    const sh = ss.insertSheet(tabName);
+    sh.getRange(1, 1, 1, SCHEMA.length).setValues([SCHEMA]);
+    sh.setFrozenRows(1);
+    const rows = orders.map((o, i) => {
+      const r = Math.random();
+      let 예약상태, 수령여부, 수령일시, 처리자;
+      if (r < sc.cancelRate) {
+        예약상태 = '취소됨'; 수령여부 = 'N'; 수령일시 = ''; 처리자 = '';
+      } else if (r < sc.cancelRate + sc.pickupRate) {
+        예약상태 = '수령완료'; 수령여부 = 'Y';
+        const base = new Date();
+        base.setDate(base.getDate() + sc.dayOffset);
+        base.setHours(9 + Math.floor(Math.random() * 11), Math.floor(Math.random() * 60));
+        수령일시 = formatDateTime(base);
+        처리자 = staff[Math.floor(Math.random() * staff.length)];
+      } else {
+        예약상태 = '예약중'; 수령여부 = 'N'; 수령일시 = ''; 처리자 = '';
+      }
+      const memo = sc.tag === 'seed_in_progress' && Math.random() < 0.15 ? 'eval 시딩 주문' : '';
+      return [
+        'R' + String(o.원본순번).padStart(4, '0') + '-' + o.예약내품목순서,
+        i + 1,
+        o.원본순번,
+        o.뒷자리,
+        o.품목명,
+        o.단가,
+        o.수량,
+        o.품목금액,
+        o.예약내품목순서,
+        o.행합계수량,
+        sc.period,
+        예약상태,
+        수령여부,
+        수령일시,
+        처리자,
+        memo,
+        o.원본뒷자리,
+        o.원본품목,
+      ];
+    });
+    if (rows.length) sh.getRange(2, 1, rows.length, SCHEMA.length).setValues(rows);
+    created.push({ id: sc.id, tab: tabName, count: rows.length, tag: sc.tag });
+  });
+  return { created, count: created.length };
+}
+
+function clearSeeded() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const seedIds = ['2026-04-05', '2026-04-12', '2026-04-12_추가입고', '2026-04-19_eval'];
+  const deleted = [];
+  seedIds.forEach(id => {
+    const sh = ss.getSheetByName(APP_STATUS_PREFIX + id);
+    if (sh) { ss.deleteSheet(sh); deleted.push(id); }
+  });
+  return { deleted };
+}
+
 function debugAnchors() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = SOURCE_SHEET_TAB
