@@ -296,17 +296,17 @@ function itemCard(r) {
 }
 
 // ---------- 조회 탭 ----------
-let _lookupState = { phone: null, selectedSurname: null };
+let _lookupState = { phone: null, selectedGroup: null };
 
 function renderLookup() {
-  const { phone, selectedSurname } = _lookupState;
+  const { phone, selectedGroup } = _lookupState;
   const container = $("#lookupResult");
   if (!phone) {
     container.innerHTML = `
       <div class="empty">
         <div class="emoji">📱</div>
-        <p class="empty-title">전화번호 뒷 4자리를 입력하세요</p>
-        <p class="empty-body">고객을 조회해 예약 내역을 확인합니다.</p>
+        <p class="empty-title">뒷자리 4자리를 입력하세요</p>
+        <p class="empty-body">입력 후 예약 내역을 확인합니다.</p>
       </div>`;
     return;
   }
@@ -322,17 +322,20 @@ function renderLookup() {
     return;
   }
 
-  // 중복 — 같은 뒷자리에 2명 이상
-  const surnames = [...new Set(items.map(i => i["고객성"]))];
-  if (surnames.length > 1 && !selectedSurname) {
-    const picks = surnames.map(s => {
-      const group = items.filter(i => i["고객성"] === s);
-      const tel = group[0]["전화번호"] || "";
+  // 중복 — 같은 뒷자리에 예약일자가 다른 묶음이 2개 이상이면 선택
+  const groupsByDate = {};
+  items.forEach(r => { (groupsByDate[r["예약일자"]] ||= []).push(r); });
+  const dateKeys = Object.keys(groupsByDate);
+  if (dateKeys.length > 1 && !selectedGroup) {
+    const picks = dateKeys.sort().reverse().map(d => {
+      const g = groupsByDate[d];
+      const firstItem = g[0]["물품명"];
+      const more = g.length > 1 ? ` 외 ${g.length - 1}건` : "";
       return `
-        <div class="pick-card" data-pick="${escapeHtml(s)}">
+        <div class="pick-card" data-pick="${escapeHtml(d)}">
           <div>
-            <div class="name">${escapeHtml(s)}** 고객님</div>
-            <div class="sub">${escapeHtml(tel)} · 예약 ${group.length}건</div>
+            <div class="name">${fmtDate(d)} 예약</div>
+            <div class="sub">${escapeHtml(firstItem)}${more} · 총 ${g.length}건</div>
           </div>
           <span class="chip-tag">선택 ▸</span>
         </div>
@@ -340,30 +343,28 @@ function renderLookup() {
     }).join("");
     container.innerHTML = `
       <div class="empty" style="padding:20px">
-        <p class="empty-title">동일 뒷자리 고객이 ${surnames.length}명 있습니다</p>
-        <p class="empty-body">성함으로 선택해주세요.</p>
+        <p class="empty-title">동일 뒷자리에 예약이 ${dateKeys.length}건 있습니다</p>
+        <p class="empty-body">예약일로 구분해주세요.</p>
       </div>
       <div class="result" style="margin-top:12px">${picks}</div>
     `;
     $$(".pick-card", container).forEach(c => {
       c.addEventListener("click", () => {
-        _lookupState.selectedSurname = c.dataset.pick;
+        _lookupState.selectedGroup = c.dataset.pick;
         renderLookup();
       });
     });
     return;
   }
 
-  if (selectedSurname) items = items.filter(i => i["고객성"] === selectedSurname);
+  if (selectedGroup) items = items.filter(i => i["예약일자"] === selectedGroup);
 
-  const customer = items[0];
   const totalCount = items.length;
   const done = items.filter(i => statusOf(i) === "수령완료").length;
   const cancelled = items.filter(i => statusOf(i) === "취소됨").length;
   const unpaidAmt = items
     .filter(i => i["결제상태"] === "미결제" && statusOf(i) === "예약중")
     .reduce((s, i) => s + Number(i["총금액(원)"] || 0), 0);
-  const tel = customer["전화번호"] || "";
 
   const unpaidLine = unpaidAmt > 0
     ? `<div class="unpaid">받을 금액 ${money(unpaidAmt)}원</div>` : "";
@@ -371,12 +372,11 @@ function renderLookup() {
   const headerHtml = `
     <div class="customer-header">
       <div>
-        <div class="who">${escapeHtml(customer["고객성"])}** 고객님 · ${escapeHtml(phone)}</div>
+        <div class="who">뒷자리 ${escapeHtml(phone)}</div>
         <div class="meta">예약 ${totalCount}건 · 수령 ${done}/${totalCount - cancelled}${cancelled ? ` · 취소 ${cancelled}` : ""}</div>
         ${unpaidLine}
       </div>
       <div class="customer-header-actions">
-        ${tel ? `<a class="btn btn-tel" href="tel:${tel.replace(/-/g,"")}">📞 ${tel}</a>` : ""}
         <button class="btn btn-outline btn-sm" id="btnPickupAll">전체 수령</button>
       </div>
     </div>
@@ -469,11 +469,11 @@ function renderPending() {
     return;
   }
 
-  // 고객별 그룹핑 (뒷자리+성 기준)
+  // 뒷자리+예약일자 기준 그룹핑
   const groups = {};
   pending.forEach(r => {
-    const key = `${r["전화번호뒷자리"]}-${r["고객성"]}`;
-    (groups[key] ||= { name: r["고객성"], phone: r["전화번호뒷자리"], tel: r["전화번호"] || "", items: [] }).items.push(r);
+    const key = `${r["전화번호뒷자리"]}|${r["예약일자"]}`;
+    (groups[key] ||= { phone: r["전화번호뒷자리"], reservedAt: r["예약일자"], items: [] }).items.push(r);
   });
 
   const keys = Object.keys(groups).sort((a, b) => {
@@ -491,19 +491,15 @@ function renderPending() {
     else if (minDiff === 0) { klass += " today"; statusTag = `<span class="chip-tag warn">오늘 수령</span>`; }
     else statusTag = `<span class="chip-tag">D-${minDiff}</span>`;
 
-    const telBtn = g.tel
-      ? `<a class="btn btn-tel" href="tel:${g.tel.replace(/-/g,"")}" onclick="event.stopPropagation()">📞</a>` : "";
-
     return `
       <details class="${klass}" ${minDiff <= 0 ? "open" : ""}>
         <summary>
           <span class="caret">▸</span>
           <div class="name-block">
-            <div class="name">${escapeHtml(g.name)}** · ${escapeHtml(g.phone)} <span style="color:var(--muted);font-size:13px;font-weight:600">(${g.items.length}건)</span></div>
-            <div class="sub">${escapeHtml(g.tel)}</div>
+            <div class="name">뒷자리 ${escapeHtml(g.phone)} <span style="color:var(--muted);font-size:13px;font-weight:600">(${g.items.length}건)</span></div>
+            <div class="sub">예약일 ${fmtDate(g.reservedAt)}</div>
           </div>
           ${statusTag}
-          ${telBtn}
         </summary>
         <div class="items">
           ${g.items.map(itemCard).join("")}
@@ -518,6 +514,7 @@ function renderPending() {
 // ---------- 전체 시트 ----------
 const SHEET_STATE = { sortKey: null, sortDir: 1, query: "" };
 const NUMERIC_COLS = new Set(["수량", "단가(원)", "할인율(%)", "총금액(원)"]);
+const SHEET_HIDDEN_COLS = new Set(["예약번호", "물품ID"]);
 
 function renderSheet() {
   const table = $("#sheetTable");
@@ -527,7 +524,7 @@ function renderSheet() {
     $("#sheetCount").textContent = "0건";
     return;
   }
-  const headers = HEADERS;
+  const headers = HEADERS.filter(h => !SHEET_HIDDEN_COLS.has(h));
   const q = SHEET_STATE.query.trim().toLowerCase();
 
   let rows = RESERVATIONS.slice();
