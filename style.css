@@ -53,6 +53,16 @@ body {
   box-shadow: 0 1px 0 rgba(0,0,0,.02);
 }
 .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 0 0 auto; }
+.today-badge {
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .topbar h1 {
   margin: 0;
   font-size: 18px;

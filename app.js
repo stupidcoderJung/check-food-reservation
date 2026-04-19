@@ -971,7 +971,29 @@ async function init() {
   }
 }
 
+function renderTodayBadge() {
+  const el = $("#todayBadge");
+  if (!el) return;
+  // Asia/Seoul 기준 연월일·요일을 부품 단위로 뽑아 조합 → 포맷 일관 보장
+  const fmt = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  });
+  const parts = fmt.formatToParts(new Date());
+  const y = parts.find(p => p.type === "year")?.value;
+  const m = parts.find(p => p.type === "month")?.value;
+  const d = parts.find(p => p.type === "day")?.value;
+  const w = parts.find(p => p.type === "weekday")?.value;
+  el.textContent = `📅 ${y}-${m}-${d} (${w})`;
+}
+
 bindTabs();
 bindSearch();
 bindActions();
+renderTodayBadge();
+// 자정마다 갱신
+setInterval(renderTodayBadge, 60000);
 init();
