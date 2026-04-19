@@ -492,6 +492,11 @@ function importFromSource(label) {
   });
 
   if (rows.length) {
+    // 뒷자리 컬럼은 텍스트 포맷으로 고정해야 "0043" 형태 보존
+    const idxBackDigit = SCHEMA.indexOf('뒷자리') + 1;
+    const idxOriginalBack = SCHEMA.indexOf('원본뒷자리') + 1;
+    if (idxBackDigit > 0) sheet.getRange(2, idxBackDigit, rows.length, 1).setNumberFormat('@');
+    if (idxOriginalBack > 0) sheet.getRange(2, idxOriginalBack, rows.length, 1).setNumberFormat('@');
     sheet.getRange(2, 1, rows.length, SCHEMA.length).setValues(rows);
   }
 
@@ -530,7 +535,10 @@ function sanitizeLabel(label) {
 }
 
 function statusKey(순번, 뒷자리, 품목명, 예약내품목순서) {
-  return [순번, 뒷자리, 품목명, 예약내품목순서].join('|');
+  // 뒷자리는 Sheets가 숫자로 자동 변환하는 경우가 있어 4자리 0-padded로 정규화
+  const p = String(뒷자리 ?? '').replace(/\D/g, '').padStart(4, '0');
+  const name = String(품목명 ?? '').replace(/\s+/g, ' ').trim();
+  return [Number(순번) || 순번, p, name, Number(예약내품목순서) || 예약내품목순서].join('|');
 }
 
 function readSnapshot(date) {
@@ -812,7 +820,17 @@ function seedHistorical() {
 
 function clearSeeded() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const seedIds = ['2026-04-05', '2026-04-12', '2026-04-12_추가입고', '2026-04-19_eval'];
+  const seedIds = [
+    '2026-04-05',
+    '2026-04-12',
+    '2026-04-12_추가입고',
+    '2026-04-19_eval',
+    // eval 중 생성된 테스트 잔여물
+    '2026-04-19_오전분',
+    '2026-04-19_API 테스트',
+    '2026-04-19_a-b-c-d',
+    '2026-04-19_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  ];
   const deleted = [];
   seedIds.forEach(id => {
     const sh = ss.getSheetByName(APP_STATUS_PREFIX + id);

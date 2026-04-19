@@ -1,7 +1,7 @@
 // GS Fresh 예약관리 — POC v3 (Google Apps Script 연동)
 // 원본 시트는 사장님 워크플로 그대로, 수령 체크는 _AppStatus_YYYY-MM-DD 탭에 기록
 
-const API_URL = "https://script.google.com/macros/s/AKfycbweQ9uT2nk6NpZrExvyHV8z0CmSOPBP08rLjMu4EKc5Ob6qAw_IwpspHEqC6Q0neXF9/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbyi4s3OdodUUznDP9wz69MtBtWdhiKWltsZtnRBPHqE0OTYEJsUaqbpzpe_gArXiHQi/exec";
 const TODAY_STR = new Date().toISOString().slice(0, 10);
 const OPERATOR = "점주";
 
