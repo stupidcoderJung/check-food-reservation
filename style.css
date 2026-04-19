@@ -310,6 +310,91 @@ main { padding: 14px; max-width: 860px; margin: 0 auto; }
   transform: translateX(-50%) translateY(0);
 }
 
+/* ---------- Sheet view ---------- */
+.sheet-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+#sheetSearch {
+  flex: 1;
+  min-width: 200px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 14px;
+}
+#sheetSearch:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.sheet-meta {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.sheet-wrap {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: auto;
+  max-height: calc(100vh - 220px);
+  -webkit-overflow-scrolling: touch;
+}
+.sheet {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  width: max-content;
+  min-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.sheet th, .sheet td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  text-align: left;
+  vertical-align: middle;
+}
+.sheet th:last-child, .sheet td:last-child { border-right: none; }
+.sheet thead th {
+  background: #f1f5f9;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  font-weight: 700;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+}
+.sheet thead th.sorted-asc::after { content: " ▲"; color: var(--primary); }
+.sheet thead th.sorted-desc::after { content: " ▼"; color: var(--primary); }
+/* 첫 열(예약번호) 고정 */
+.sheet th:first-child, .sheet td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 1;
+  font-weight: 700;
+}
+.sheet thead th:first-child {
+  z-index: 3;
+  background: #e2e8f0;
+}
+.sheet tbody tr:hover td { background: #f8fafc; }
+.sheet tbody tr:hover th:first-child,
+.sheet tbody tr:hover td:first-child { background: #f1f5f9; }
+
+.sheet td.pickup-y { color: var(--success); font-weight: 700; }
+.sheet td.pickup-n { color: var(--danger); font-weight: 700; }
+.sheet td.overdue { background: #fee2e2 !important; color: #991b1b; font-weight: 700; }
+.sheet td.num { text-align: right; }
+
 /* ---------- Desktop tweaks ---------- */
 @media (min-width: 700px) {
   .topbar h1 { font-size: 20px; }

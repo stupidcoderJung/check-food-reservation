@@ -17,10 +17,11 @@
   </header>
 
   <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="lookup" role="tab">예약 조회</button>
+    <button class="tab active" data-tab="lookup" role="tab">조회</button>
     <button class="tab" data-tab="pending" role="tab">
       미수령 <span id="pendingBadge" class="badge">0</span>
     </button>
+    <button class="tab" data-tab="sheet" role="tab">전체 시트</button>
   </nav>
 
   <main>
@@ -44,6 +45,27 @@
       </div>
 
       <div id="lookupResult" class="result"></div>
+    </section>
+
+    <!-- 전체 시트 탭 -->
+    <section id="tab-sheet" class="tab-panel">
+      <div class="sheet-toolbar">
+        <input
+          id="sheetSearch"
+          type="search"
+          placeholder="🔎 물품명·고객·비고 검색"
+          autocomplete="off"
+        />
+        <div class="sheet-meta">
+          <span id="sheetCount">0건</span>
+        </div>
+      </div>
+      <div class="sheet-wrap">
+        <table class="sheet" id="sheetTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- 미수령 탭 -->

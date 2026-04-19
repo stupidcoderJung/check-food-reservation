@@ -116,6 +116,7 @@ function renderLookup(phone) {
       setPickup(id, next);
       renderLookup(phone);
       refreshPendingBadge();
+      if ($("#tab-sheet").classList.contains("active")) renderSheet();
       toast(next ? "수령 처리됨" : "수령 취소됨");
     });
   });
@@ -231,6 +232,7 @@ function renderPending() {
       setPickup(id, next);
       renderPending();
       refreshPendingBadge();
+      if ($("#tab-sheet").classList.contains("active")) renderSheet();
       toast(next ? "수령 처리됨" : "수령 취소됨");
     });
   });
@@ -252,8 +254,78 @@ function bindTabs() {
       tab.classList.add("active");
       $("#tab-" + tab.dataset.tab).classList.add("active");
       if (tab.dataset.tab === "pending") renderPending();
+      if (tab.dataset.tab === "sheet") renderSheet();
     });
   });
+}
+
+// ---------- 전체 시트 ----------
+const SHEET_STATE = { sortKey: null, sortDir: 1, query: "" };
+const NUMERIC_COLS = new Set(["수량", "단가(원)", "할인율(%)", "총금액(원)"]);
+
+function renderSheet() {
+  const table = $("#sheetTable");
+  if (!RESERVATIONS.length) return;
+  const headers = Object.keys(RESERVATIONS[0]);
+  const q = SHEET_STATE.query.trim().toLowerCase();
+
+  let rows = RESERVATIONS.slice();
+  if (q) {
+    rows = rows.filter(r =>
+      headers.some(h => String(r[h] ?? "").toLowerCase().includes(q))
+    );
+  }
+  if (SHEET_STATE.sortKey) {
+    const k = SHEET_STATE.sortKey;
+    const dir = SHEET_STATE.sortDir;
+    const isNum = NUMERIC_COLS.has(k);
+    rows.sort((a, b) => {
+      const va = isNum ? Number(a[k] || 0) : String(a[k] ?? "");
+      const vb = isNum ? Number(b[k] || 0) : String(b[k] ?? "");
+      if (va < vb) return -dir;
+      if (va > vb) return dir;
+      return 0;
+    });
+  }
+
+  const thead = headers.map(h => {
+    let cls = "";
+    if (SHEET_STATE.sortKey === h) cls = SHEET_STATE.sortDir === 1 ? "sorted-asc" : "sorted-desc";
+    return `<th data-key="${h}" class="${cls}">${h}</th>`;
+  }).join("");
+
+  const tbody = rows.map(r => {
+    const today = new Date(TODAY);
+    const due = new Date(r["수령예정일"]);
+    const overdue = r["수령여부"] !== "Y" && daysBetween(new Date(today), due) < 0;
+    return "<tr>" + headers.map(h => {
+      const v = r[h] ?? "";
+      let cls = "";
+      if (NUMERIC_COLS.has(h)) cls += " num";
+      if (h === "수령여부") cls += v === "Y" ? " pickup-y" : " pickup-n";
+      if (h === "수령예정일" && overdue) cls += " overdue";
+      return `<td class="${cls.trim()}">${escapeHtml(v)}</td>`;
+    }).join("") + "</tr>";
+  }).join("");
+
+  table.querySelector("thead").innerHTML = "<tr>" + thead + "</tr>";
+  table.querySelector("tbody").innerHTML = tbody;
+  $("#sheetCount").textContent = `${rows.length}건 / 총 ${RESERVATIONS.length}건`;
+
+  $$("#sheetTable thead th").forEach(th => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.key;
+      if (SHEET_STATE.sortKey === k) SHEET_STATE.sortDir *= -1;
+      else { SHEET_STATE.sortKey = k; SHEET_STATE.sortDir = 1; }
+      renderSheet();
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function bindSearch() {
@@ -299,6 +371,12 @@ function bindActions() {
   });
 
   $("#filterOverdue").addEventListener("change", renderPending);
+
+  const search = $("#sheetSearch");
+  search.addEventListener("input", () => {
+    SHEET_STATE.query = search.value;
+    renderSheet();
+  });
 }
 
 // ---------- 초기화 ----------
