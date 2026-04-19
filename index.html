@@ -3,26 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#2563eb" />
+  <meta name="theme-color" content="#15803d" />
   <title>동네슈퍼 예약 관리</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='52' font-size='56'%3E%F0%9F%9B%92%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="topbar">
     <h1>🛒 동네슈퍼 예약관리</h1>
     <div class="topbar-actions">
+      <label class="btn btn-ghost" title="CSV 업로드">
+        ⬆ 업로드<input type="file" id="fileUpload" accept=".csv" hidden />
+      </label>
       <button id="btnExport" class="btn btn-ghost" title="CSV 내려받기">⬇ CSV</button>
       <button id="btnReset" class="btn btn-ghost" title="로컬 변경 초기화">↺</button>
     </div>
   </header>
-
-  <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="lookup" role="tab">조회</button>
-    <button class="tab" data-tab="pending" role="tab">
-      미수령 <span id="pendingBadge" class="badge">0</span>
-    </button>
-    <button class="tab" data-tab="sheet" role="tab">전체 시트</button>
-  </nav>
 
   <main>
     <!-- 조회 탭 -->
@@ -36,15 +32,34 @@
             inputmode="numeric"
             pattern="[0-9]*"
             maxlength="4"
-            placeholder="예: 4821"
+            placeholder="0000"
             autocomplete="off"
           />
+          <button id="btnClear" class="btn btn-outline" title="지우기">✕</button>
           <button id="btnSearch" class="btn btn-primary">조회</button>
         </div>
-        <p id="searchHint" class="hint">숫자 4자리를 입력하세요.</p>
       </div>
 
       <div id="lookupResult" class="result"></div>
+    </section>
+
+    <!-- 미수령 탭 -->
+    <section id="tab-pending" class="tab-panel">
+      <div class="summary-bar" id="summaryBar"></div>
+      <div class="pending-header">
+        <h2>미수령 현황</h2>
+        <div class="filter-row">
+          <label class="chip">
+            <input type="checkbox" id="filterOverdue" />
+            기한지남만
+          </label>
+          <label class="chip">
+            <input type="checkbox" id="filterStoreOnly" />
+            매장수령만
+          </label>
+        </div>
+      </div>
+      <div id="pendingResult" class="result"></div>
     </section>
 
     <!-- 전체 시트 탭 -->
@@ -67,23 +82,38 @@
         </table>
       </div>
     </section>
-
-    <!-- 미수령 탭 -->
-    <section id="tab-pending" class="tab-panel">
-      <div class="pending-header">
-        <h2>미수령 현황</h2>
-        <div class="filter-row">
-          <label class="chip">
-            <input type="checkbox" id="filterOverdue" />
-            기한지난 건만
-          </label>
-        </div>
-      </div>
-      <div id="pendingResult" class="result"></div>
-    </section>
   </main>
 
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <!-- 하단 탭바 -->
+  <nav class="tabbar" role="tablist">
+    <button class="tab active" data-tab="lookup" role="tab">
+      <span class="tab-ico">🔍</span><span>조회</span>
+    </button>
+    <button class="tab" data-tab="pending" role="tab">
+      <span class="tab-ico">⏰</span>
+      <span>미수령 <span id="pendingBadge" class="badge">0</span></span>
+    </button>
+    <button class="tab" data-tab="sheet" role="tab">
+      <span class="tab-ico">📋</span><span>전체 시트</span>
+    </button>
+  </nav>
+
+  <!-- 확인 모달 -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3 id="modalTitle"></h3>
+      <p id="modalBody"></p>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="modalCancel">취소</button>
+        <button class="btn btn-primary" id="modalConfirm">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite">
+    <span id="toastMsg"></span>
+    <button id="toastUndo" class="toast-undo" hidden>되돌리기</button>
+  </div>
 
   <script src="app.js"></script>
 </body>
