@@ -135,13 +135,50 @@ function confirmModal({ title, body, confirmText = "확인", danger = false, inp
 }
 
 // ---------- API 호출 ----------
+let _inflight = 0;
+function incInflight(label) {
+  _inflight++;
+  updateNetIndicator(label);
+}
+function decInflight() {
+  _inflight = Math.max(0, _inflight - 1);
+  updateNetIndicator();
+}
+
+function apiLabelFrom(opts) {
+  try {
+    if (!opts || !opts.body) return "불러오는 중";
+    const body = typeof opts.body === "string" ? JSON.parse(opts.body) : opts.body;
+    const a = body.action;
+    return {
+      import: "원본 시트 파싱 중",
+      pickup: "수령 처리 중",
+      cancel: "취소 처리 중",
+      restore: "복원 중",
+      update: "저장 중",
+      seedHistorical: "시딩 중",
+      clearSeeded: "정리 중",
+    }[a] || "처리 중";
+  } catch { return "처리 중"; }
+}
+
 async function api(path, opts = {}) {
   const url = API_URL + path;
-  const res = await fetch(url, opts);
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  const data = await res.json();
-  if (data.ok === false) throw new Error(data.error || "API error");
-  return data;
+  const label = apiLabelFrom(opts);
+  incInflight(label);
+  const t0 = performance.now();
+  try {
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (data.ok === false) throw new Error(data.error || "API error");
+    return data;
+  } finally {
+    const dt = Math.round(performance.now() - t0);
+    decInflight();
+    // 빠른 요청은 깜빡이지 않게 (최소 250ms 유지)
+    if (dt < 100) await new Promise(r => setTimeout(r, 0));
+  }
 }
 
 async function apiGet(params = {}) {
@@ -158,7 +195,52 @@ async function apiPost(body) {
   });
 }
 
-// ---------- 로딩 오버레이 ----------
+// ---------- 네트워크 인디케이터 ----------
+// 상단 프로그레스 바 + 우하단 pill 상태. inflight > 0이면 자동 표시.
+function ensureNetUI() {
+  if ($("#netBar")) return;
+  const bar = document.createElement("div");
+  bar.id = "netBar";
+  bar.className = "net-bar";
+  bar.innerHTML = `<div class="net-bar-fill"></div>`;
+  document.body.appendChild(bar);
+
+  const pill = document.createElement("div");
+  pill.id = "netPill";
+  pill.className = "net-pill";
+  pill.innerHTML = `<span class="spinner"></span><span id="netPillText">처리 중</span><span id="netPillTimer"></span>`;
+  document.body.appendChild(pill);
+}
+
+let _netTimer = null;
+let _netStart = 0;
+
+function updateNetIndicator(label) {
+  ensureNetUI();
+  const bar = $("#netBar");
+  const pill = $("#netPill");
+  if (_inflight > 0) {
+    bar.classList.add("show");
+    if (label) $("#netPillText").textContent = label + "…";
+    pill.classList.add("show");
+    if (!_netTimer) {
+      _netStart = Date.now();
+      _netTimer = setInterval(() => {
+        const sec = Math.floor((Date.now() - _netStart) / 1000);
+        const t = $("#netPillTimer");
+        if (t) t.textContent = sec > 0 ? ` ${sec}s` : "";
+      }, 500);
+    }
+  } else {
+    bar.classList.remove("show");
+    pill.classList.remove("show");
+    if (_netTimer) { clearInterval(_netTimer); _netTimer = null; }
+    const t = $("#netPillTimer");
+    if (t) t.textContent = "";
+  }
+}
+
+// 기존 setBusy는 전체 화면 오버레이가 필요한 경우(예: 초기 로드) 유지
 function setBusy(yes, text = "불러오는 중…") {
   let el = $("#busy");
   if (yes) {

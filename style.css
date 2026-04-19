@@ -845,6 +845,64 @@ main { padding: 14px; max-width: 860px; margin: 0 auto; }
 }
 .toast-undo:hover { color: #fbbf24; }
 
+/* ---------- Net indicator (thin top bar + pill) ---------- */
+.net-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: transparent;
+  z-index: 80;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity .15s ease;
+  pointer-events: none;
+}
+.net-bar.show { opacity: 1; }
+.net-bar-fill {
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  animation: netSlide 1.1s ease-in-out infinite;
+}
+@keyframes netSlide {
+  0%   { transform: translateX(-60%); }
+  50%  { transform: translateX(120%); }
+  100% { transform: translateX(260%); }
+}
+
+.net-pill {
+  position: fixed;
+  right: 14px;
+  bottom: calc(var(--tabbar-h) + 20px + env(safe-area-inset-bottom));
+  background: #111827;
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 55;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity .18s ease, transform .18s ease;
+  pointer-events: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,.25);
+  white-space: nowrap;
+}
+.net-pill.show { opacity: 1; transform: translateY(0); }
+.net-pill .spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+  border-top-color: #fcd34d;
+  border-color: rgba(255,255,255,.25);
+  border-top-color: #fcd34d;
+}
+
 /* ---------- Busy overlay ---------- */
 .busy {
   position: fixed;
