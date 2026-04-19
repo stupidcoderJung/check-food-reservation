@@ -60,17 +60,6 @@ body {
   letter-spacing: -0.2px;
   white-space: nowrap;
 }
-.period-badge {
-  background: var(--primary-soft);
-  color: var(--primary-dark);
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .topbar-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .snapshot-picker {
   padding: 8px 10px;
@@ -646,6 +635,36 @@ main { padding: 14px; max-width: 860px; margin: 0 auto; }
 .sheet td.status-cancel { color: var(--muted); font-weight: 700; }
 .sheet td.overdue-cell { background: #fee2e2 !important; color: #991b1b; font-weight: 700; }
 .sheet td.num { text-align: right; }
+.sheet td.editable {
+  background: #fefce8;
+  padding: 4px 6px;
+  position: relative;
+}
+.sheet td.editable:hover { background: #fef9c3; }
+.sheet .cell-edit {
+  border: 1px solid transparent;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 4px 6px;
+  border-radius: 4px;
+  min-width: 80px;
+  width: 100%;
+  max-width: 220px;
+  transition: border-color .15s ease, background .2s ease, box-shadow .2s ease;
+}
+.sheet .cell-edit:hover { border-color: var(--border); background: #fff; }
+.sheet .cell-edit:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: #fff;
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+.sheet .cell-edit.num-input { text-align: right; min-width: 60px; max-width: 90px; }
+.sheet .cell-edit.saving { background: #fff7ed; }
+.sheet .cell-edit.saved { background: #dcfce7; border-color: var(--success); }
+.sheet .cell-edit.error { background: #fee2e2; border-color: var(--danger); }
+.sheet select.cell-edit { cursor: pointer; }
 
 /* ---------- Modal ---------- */
 .modal {

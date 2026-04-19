@@ -94,6 +94,7 @@ function doPost(e) {
     if (action === 'pickup') return json({ ok: true, row: setPickup(body.id, body.state === true || body.state === 'Y') });
     if (action === 'cancel') return json({ ok: true, row: setStatus(body.id, '취소됨', 'N') });
     if (action === 'restore') return json({ ok: true, row: setStatus(body.id, '예약중', 'N') });
+    if (action === 'update') return json({ ok: true, row: updateCell(body.id, body.field, body.value) });
     return json({ ok: false, error: 'unknown action: ' + action });
   } catch (err) {
     return json({ ok: false, error: String(err), stack: err.stack });
@@ -546,6 +547,44 @@ function setStatus(id, status, y) {
   if (status !== '수령완료') {
     sheet.getRange(rowIdx, headerIdx['수령일시']).setValue('');
     sheet.getRange(rowIdx, headerIdx['처리자']).setValue('');
+  }
+  return getRow(sheet, rowIdx);
+}
+
+// 인라인 편집용 — 허용된 필드만 수정
+const EDITABLE_FIELDS = new Set(['비고', '수량', '예약상태', '수령여부']);
+
+function updateCell(id, field, value) {
+  if (!EDITABLE_FIELDS.has(field)) {
+    throw new Error('수정이 허용되지 않은 필드: ' + field);
+  }
+  const { sheet, rowIdx } = findRowById(id);
+  const headerIdx = Object.fromEntries(SCHEMA.map((h, i) => [h, i + 1]));
+
+  if (field === '예약상태') {
+    const allowed = ['예약중', '수령완료', '취소됨'];
+    if (!allowed.includes(value)) throw new Error('잘못된 예약상태: ' + value);
+    sheet.getRange(rowIdx, headerIdx['예약상태']).setValue(value);
+    if (value === '수령완료') {
+      sheet.getRange(rowIdx, headerIdx['수령여부']).setValue('Y');
+      const cur = sheet.getRange(rowIdx, headerIdx['수령일시']).getValue();
+      if (!cur) {
+        sheet.getRange(rowIdx, headerIdx['수령일시']).setValue(formatDateTime(new Date()));
+        sheet.getRange(rowIdx, headerIdx['처리자']).setValue('점주');
+      }
+    } else {
+      sheet.getRange(rowIdx, headerIdx['수령여부']).setValue('N');
+      sheet.getRange(rowIdx, headerIdx['수령일시']).setValue('');
+      sheet.getRange(rowIdx, headerIdx['처리자']).setValue('');
+    }
+  } else if (field === '수량') {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) throw new Error('잘못된 수량: ' + value);
+    sheet.getRange(rowIdx, headerIdx['수량']).setValue(n);
+    const 단가 = Number(sheet.getRange(rowIdx, headerIdx['단가']).getValue() || 0);
+    sheet.getRange(rowIdx, headerIdx['품목금액']).setValue(n * 단가);
+  } else {
+    sheet.getRange(rowIdx, headerIdx[field]).setValue(String(value ?? ''));
   }
   return getRow(sheet, rowIdx);
 }

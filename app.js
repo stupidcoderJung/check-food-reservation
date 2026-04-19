@@ -187,13 +187,7 @@ function normalize(r) {
 }
 
 function updatePeriodBadge() {
-  const el = $("#periodBadge");
-  if (PERIOD_TEXT) {
-    el.textContent = "📅 " + PERIOD_TEXT;
-    el.hidden = false;
-  } else {
-    el.hidden = true;
-  }
+  // 수령기간 배지 제거됨 (no-op)
 }
 
 function refreshSnapshotPicker() {
@@ -587,6 +581,8 @@ function renderPending() {
 const SHEET_STATE = { sortKey: null, sortDir: 1, query: "" };
 const NUMERIC_COLS = new Set(["수량", "단가", "품목금액", "원본순번", "예약내품목순서", "행합계수량"]);
 const SHEET_HIDDEN_COLS = new Set(["예약번호", "원본순번", "예약내품목순서", "원본뒷자리", "원본품목", "행합계수량"]);
+const EDITABLE_SHEET_COLS = new Set(["예약상태", "수량", "비고"]);
+const STATUS_OPTIONS = ["예약중", "수령완료", "취소됨"];
 
 function renderSheet() {
   const table = $("#sheetTable");
@@ -625,13 +621,26 @@ function renderSheet() {
   }).join("") + "</tr>";
 
   const tbody = rows.map(r => {
-    const st = statusOf(r);
-    return "<tr>" + headers.map(h => {
+    return "<tr data-id=\"" + escapeHtml(r["예약번호"]) + "\">" + headers.map(h => {
       const v = r[h] ?? "";
       let cls = "";
       if (NUMERIC_COLS.has(h)) cls += " num";
       if (h === "수령여부") cls += v === "Y" ? " pickup-y" : " pickup-n";
       if (h === "예약상태" && v === "취소됨") cls += " status-cancel";
+      if (EDITABLE_SHEET_COLS.has(h)) cls += " editable";
+      let content;
+      if (h === "예약상태") {
+        content = STATUS_OPTIONS.map(opt =>
+          `<option value="${opt}" ${opt === v ? "selected" : ""}>${opt}</option>`
+        ).join("");
+        return `<td class="${cls.trim()}"><select class="cell-edit" data-field="예약상태">${content}</select></td>`;
+      }
+      if (h === "수량") {
+        return `<td class="${cls.trim()}"><input type="number" min="0" class="cell-edit num-input" data-field="수량" value="${escapeHtml(v)}" /></td>`;
+      }
+      if (h === "비고") {
+        return `<td class="${cls.trim()}"><input type="text" class="cell-edit" data-field="비고" value="${escapeHtml(v)}" placeholder="—" /></td>`;
+      }
       return `<td class="${cls.trim()}">${escapeHtml(v)}</td>`;
     }).join("") + "</tr>";
   }).join("");
@@ -647,6 +656,46 @@ function renderSheet() {
       else { SHEET_STATE.sortKey = k; SHEET_STATE.sortDir = 1; }
       renderSheet();
     });
+  });
+
+  // 인라인 편집
+  $$("#sheetTable .cell-edit").forEach(el => {
+    const tr = el.closest("tr");
+    const id = tr.dataset.id;
+    const field = el.dataset.field;
+
+    const commit = async () => {
+      const row = ROWS.find(r => r["예약번호"] === id);
+      if (!row) return;
+      let newVal = el.value;
+      const origVal = row[field];
+      if (field === "수량") newVal = Number(newVal);
+      if (String(newVal) === String(origVal ?? "")) return;
+
+      el.classList.add("saving");
+      try {
+        const r = await apiPost({ action: "update", id, field, value: newVal });
+        Object.assign(row, normalize(r.row));
+        el.classList.remove("saving");
+        el.classList.add("saved");
+        setTimeout(() => el.classList.remove("saved"), 800);
+        refreshBadge();
+        // 예약상태 변경 시 다른 탭에도 영향
+        if (field === "예약상태" || field === "수량") renderSheet();
+      } catch (e) {
+        el.classList.remove("saving");
+        el.classList.add("error");
+        toast("저장 실패: " + e.message);
+        el.value = origVal;
+      }
+    };
+
+    if (el.tagName === "SELECT") {
+      el.addEventListener("change", commit);
+    } else {
+      el.addEventListener("blur", commit);
+      el.addEventListener("keydown", e => { if (e.key === "Enter") el.blur(); });
+    }
   });
 }
 
