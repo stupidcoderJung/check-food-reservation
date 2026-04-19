@@ -52,13 +52,37 @@ body {
   border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 0 rgba(0,0,0,.02);
 }
+.topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
 .topbar h1 {
   margin: 0;
   font-size: 18px;
   font-weight: 800;
   letter-spacing: -0.2px;
+  white-space: nowrap;
 }
-.topbar-actions { display: flex; gap: 6px; }
+.period-badge {
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.snapshot-picker {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text);
+  max-width: 180px;
+}
 
 /* ---------- Bottom tabbar ---------- */
 .tabbar {
@@ -706,6 +730,41 @@ main { padding: 14px; max-width: 860px; margin: 0 auto; }
   margin-left: 4px;
 }
 .toast-undo:hover { color: #fbbf24; }
+
+/* ---------- Busy overlay ---------- */
+.busy {
+  position: fixed;
+  inset: 0;
+  background: rgba(17,24,39,.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+}
+.busy.show { opacity: 1; pointer-events: auto; }
+.busy-card {
+  background: #fff;
+  padding: 18px 24px;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.2);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 14px;
+}
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid #e5e7eb;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- Desktop tweaks ---------- */
 @media (min-width: 700px) {

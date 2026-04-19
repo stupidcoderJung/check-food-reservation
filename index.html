@@ -10,13 +10,13 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>🛒 GS Fresh 예약관리</h1>
+    <div class="topbar-left">
+      <h1>🛒 GS Fresh</h1>
+      <div class="period-badge" id="periodBadge" hidden></div>
+    </div>
     <div class="topbar-actions">
-      <label class="btn btn-ghost" title="CSV 업로드">
-        ⬆ 업로드<input type="file" id="fileUpload" accept=".csv" hidden />
-      </label>
-      <button id="btnExport" class="btn btn-ghost" title="CSV 내려받기">⬇ CSV</button>
-      <button id="btnReset" class="btn btn-ghost" title="로컬 변경 초기화">↺</button>
+      <button id="btnImport" class="btn btn-ghost" title="원본 시트에서 다시 불러오기">📥 불러오기</button>
+      <button id="btnRefresh" class="btn btn-ghost" title="새로고침">↻</button>
     </div>
   </header>
 
@@ -66,16 +66,6 @@
           <span class="seg-count" id="segCountFuture">0</span>
         </button>
       </div>
-      <div class="sub-filter-row">
-        <label class="chip-toggle">
-          <input type="checkbox" id="filterStoreOnly" />
-          <span>🏪 매장수령만</span>
-        </label>
-        <label class="chip-toggle">
-          <input type="checkbox" id="filterDeliveryOnly" />
-          <span>🚚 배달만</span>
-        </label>
-      </div>
       <div id="pendingResult" class="result"></div>
     </section>
 
@@ -85,9 +75,10 @@
         <input
           id="sheetSearch"
           type="search"
-          placeholder="🔎 물품명·고객·비고 검색"
+          placeholder="🔎 품목명·뒷자리·비고 검색"
           autocomplete="off"
         />
+        <select id="snapshotPicker" class="snapshot-picker"></select>
         <div class="sheet-meta">
           <span id="sheetCount">0건</span>
         </div>

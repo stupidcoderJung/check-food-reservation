@@ -1,53 +1,26 @@
-// GS Fresh 예약관리 — POC v2
-// - 뒷자리 중복 처리, 예약 취소, 수령 Undo, tel 링크, 배달 구분, CSV 업로드, 하단 탭바, UX 폴리시
+// GS Fresh 예약관리 — POC v3 (Google Apps Script 연동)
+// 원본 시트는 사장님 워크플로 그대로, 수령 체크는 _AppStatus_YYYY-MM-DD 탭에 기록
 
-const DEFAULT_CSV_URL = "reservations.csv";
-const STORAGE_KEY = "pickup-overlay-v2";
-const CSV_CACHE_KEY = "csv-cache-v1";
-const TODAY_STR = "2026-04-19"; // 데모 기준일 (실배포 시 제거)
-const OPERATOR = "점주"; // 처리자 기본값
+const API_URL = "https://script.google.com/macros/s/AKfycbz8T14pnyzE7XMg5L4SUP4B3hSASh2WPyVWffhGIVtHUOBjAWsGgU7UIgs8qtyq2Sc/exec";
+const TODAY_STR = new Date().toISOString().slice(0, 10);
+const OPERATOR = "점주";
 
-let RESERVATIONS = [];
+// ---------- 전역 상태 ----------
+let ROWS = [];
 let HEADERS = [];
+let SNAPSHOTS = [];
+let ACTIVE_DATE = null;
+let PERIOD_TEXT = "";
 let _loaded = false;
 
 // ---------- 공통 유틸 ----------
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-const today = () => new Date(TODAY_STR);
-
-function parseCsv(text) {
-  // 따옴표 미사용 CSV 단순 파서. 이번 스키마에 포함된 쉼표/줄바꿈 값 없음.
-  const lines = text.replace(/\uFEFF/g, "").trim().split(/\r?\n/);
-  const headers = lines[0].split(",");
-  const rows = lines.slice(1).map(line => {
-    const cells = line.split(",");
-    const row = {};
-    headers.forEach((h, i) => { row[h] = cells[i] ?? ""; });
-    return row;
-  });
-  return { headers, rows };
-}
-
-function toCsv(rows, headers) {
-  if (!rows.length) return "";
-  const lines = [headers.join(",")];
-  for (const r of rows) lines.push(headers.map(h => r[h] ?? "").join(","));
-  return lines.join("\n") + "\n";
-}
-
-function loadOverlay() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
-  catch { return {}; }
-}
-function saveOverlay(o) { localStorage.setItem(STORAGE_KEY, JSON.stringify(o)); }
-
-function applyOverlay(rows, overlay) {
-  return rows.map(r => {
-    const o = overlay[r["예약번호"]];
-    return o ? { ...r, ...o } : { ...r };
-  });
-}
+const today = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
 
 function daysBetween(a, b) {
   const d1 = new Date(a.getFullYear(), a.getMonth(), a.getDate());
@@ -55,16 +28,8 @@ function daysBetween(a, b) {
   return Math.round((d2 - d1) / 86400000);
 }
 
-function fmtDate(iso) {
-  if (!iso) return "-";
-  const d = new Date(iso);
-  const diff = daysBetween(today(), d);
-  const wd = ["일","월","화","수","목","금","토"][d.getDay()];
-  const short = `${d.getMonth()+1}/${d.getDate()}(${wd})`;
-  if (diff === 0) return `오늘 ${short}`;
-  if (diff === 1) return `내일 ${short}`;
-  if (diff === -1) return `어제 ${short}`;
-  return short;
+function pad4(v) {
+  return String(v ?? "").replace(/\D/g, "").padStart(4, "0").slice(-4);
 }
 
 function money(n) {
@@ -77,18 +42,24 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-function nowStamp() {
-  const d = new Date();
-  const z = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`;
-}
-
 function statusOf(r) {
-  if (r["예약상태"]) return r["예약상태"];
-  return r["수령여부"] === "Y" ? "수령완료" : "예약중";
+  return r["예약상태"] || (r["수령여부"] === "Y" ? "수령완료" : "예약중");
 }
 
-// ---------- 토스트 (Undo 지원) ----------
+// ---------- 수령기간에서 마감일 추정 ----------
+// 예: "4/20~21 월화 수령" → 올해 기준으로 두 번째 날짜(21)를 마감으로 해석
+function parsePeriodDueDate(text) {
+  if (!text) return null;
+  const m = String(text).match(/(\d{1,2})\/(\d{1,2})(?:~(\d{1,2}))?/);
+  if (!m) return null;
+  const mm = Number(m[1]);
+  const d1 = Number(m[2]);
+  const d2 = m[3] ? Number(m[3]) : d1;
+  const year = new Date().getFullYear();
+  return new Date(year, mm - 1, d2);
+}
+
+// ---------- 토스트 ----------
 let _undoTimer = null;
 let _undoAction = null;
 function toast(msg, { undo } = {}) {
@@ -136,115 +107,204 @@ function confirmModal({ title, body, confirmText = "확인", danger = false }) {
   });
 }
 
-// ---------- 상태 변경 ----------
-function mutate(id, patch) {
-  const overlay = loadOverlay();
-  overlay[id] = { ...(overlay[id] || {}), ...patch };
-  saveOverlay(overlay);
-  const row = RESERVATIONS.find(r => r["예약번호"] === id);
-  if (row) Object.assign(row, patch);
+// ---------- API 호출 ----------
+async function api(path, opts = {}) {
+  const url = API_URL + path;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  if (data.ok === false) throw new Error(data.error || "API error");
+  return data;
 }
 
-async function setPickup(id, yes) {
-  const row = RESERVATIONS.find(r => r["예약번호"] === id);
-  if (!row) return;
+async function apiGet(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return api("?" + qs);
+}
 
-  if (yes && row["수령방법"] === "배달") {
-    const ok = await confirmModal({
-      title: "배달 건입니다",
-      body: `${row["물품명"]}은(는) 배달로 예약된 상품입니다.\n매장에서 전달하시겠습니까?`,
-      confirmText: "매장 전달",
-    });
-    if (!ok) return;
-  }
+async function apiPost(body) {
+  // Apps Script는 표준 CORS가 아니라 text/plain으로 보내야 preflight 안 뜸
+  return api("", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(body),
+  });
+}
 
-  const prev = {
-    "수령여부": row["수령여부"],
-    "예약상태": row["예약상태"],
-    "수령일시": row["수령일시"] || "",
-    "처리자": row["처리자"] || "",
-  };
-
+// ---------- 로딩 오버레이 ----------
+function setBusy(yes, text = "불러오는 중…") {
+  let el = $("#busy");
   if (yes) {
-    mutate(id, {
-      "수령여부": "Y",
-      "예약상태": "수령완료",
-      "수령일시": nowStamp(),
-      "처리자": OPERATOR,
-      "결제상태": row["결제상태"] === "미결제" ? "완료" : row["결제상태"],
-    });
-  } else {
-    mutate(id, {
-      "수령여부": "N",
-      "예약상태": "예약중",
-      "수령일시": "",
-      "처리자": "",
-    });
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "busy";
+      el.className = "busy";
+      el.innerHTML = `<div class="busy-card"><div class="spinner"></div><span id="busyText"></span></div>`;
+      document.body.appendChild(el);
+    }
+    $("#busyText", el).textContent = text;
+    el.classList.add("show");
+  } else if (el) {
+    el.classList.remove("show");
   }
+}
+
+// ---------- 데이터 로드 ----------
+async function loadSnapshots() {
+  const r = await apiGet({ action: "snapshots" });
+  SNAPSHOTS = r.snapshots || [];
+  ACTIVE_DATE = r.active || (SNAPSHOTS.length ? SNAPSHOTS[SNAPSHOTS.length - 1] : null);
+  refreshSnapshotPicker();
+}
+
+async function loadActive(date) {
+  setBusy(true, "데이터 불러오는 중…");
+  try {
+    const r = await apiGet({ action: "list", ...(date ? { date } : {}) });
+    HEADERS = r.headers || [];
+    ROWS = (r.rows || []).map(normalize);
+    ACTIVE_DATE = r.date || ACTIVE_DATE;
+    PERIOD_TEXT = ROWS[0]?.["수령기간"] || "";
+    updatePeriodBadge();
+    _loaded = true;
+  } finally {
+    setBusy(false);
+  }
+}
+
+function normalize(r) {
+  // 숫자/문자열 컨버전
+  const out = { ...r };
+  out["뒷자리"] = pad4(r["뒷자리"]);
+  out["수량"] = Number(r["수량"] || 0);
+  out["단가"] = Number(r["단가"] || 0);
+  out["품목금액"] = Number(r["품목금액"] || 0);
+  out["원본순번"] = Number(r["원본순번"] || 0);
+  out["예약내품목순서"] = Number(r["예약내품목순서"] || 1);
+  out["예약상태"] = r["예약상태"] || "예약중";
+  out["수령여부"] = r["수령여부"] || "N";
+  return out;
+}
+
+function updatePeriodBadge() {
+  const el = $("#periodBadge");
+  if (PERIOD_TEXT) {
+    el.textContent = "📅 " + PERIOD_TEXT;
+    el.hidden = false;
+  } else {
+    el.hidden = true;
+  }
+}
+
+function refreshSnapshotPicker() {
+  const sel = $("#snapshotPicker");
+  if (!sel) return;
+  sel.innerHTML = SNAPSHOTS.map(d =>
+    `<option value="${d}" ${d === ACTIVE_DATE ? "selected" : ""}>${d}</option>`
+  ).join("");
+  sel.disabled = SNAPSHOTS.length <= 1;
+}
+
+// ---------- 상태 변경 (API 호출) ----------
+async function setPickup(id, yes) {
+  const prev = ROWS.find(r => r["예약번호"] === id);
+  if (!prev) return;
+
+  // 낙관적 업데이트
+  const snapshot = { ...prev };
+  Object.assign(prev, yes
+    ? { "수령여부": "Y", "예약상태": "수령완료", "수령일시": nowStamp(), "처리자": OPERATOR }
+    : { "수령여부": "N", "예약상태": "예약중", "수령일시": "", "처리자": "" });
   rerenderAll();
 
-  toast(yes ? "✓ 수령 처리됨" : "수령 취소됨", {
-    undo: () => {
-      mutate(id, prev);
-      rerenderAll();
-      hideToast();
-      toast("되돌림");
-    },
-  });
+  try {
+    const r = await apiPost({ action: "pickup", id, state: yes });
+    Object.assign(prev, normalize(r.row));
+    rerenderAll();
+    toast(yes ? "✓ 수령 처리됨" : "수령 취소됨", {
+      undo: async () => {
+        hideToast();
+        await setPickup(id, !yes);
+      },
+    });
+  } catch (e) {
+    Object.assign(prev, snapshot);
+    rerenderAll();
+    toast("네트워크 오류: " + e.message);
+  }
 }
 
 async function cancelReservation(id) {
-  const row = RESERVATIONS.find(r => r["예약번호"] === id);
+  const row = ROWS.find(r => r["예약번호"] === id);
   if (!row) return;
   const ok = await confirmModal({
     title: "예약 취소",
-    body: `${row["물품명"]} 예약을 취소할까요?\n미수령 목록에서 제외됩니다.`,
+    body: `${row["품목명"]} 예약을 취소할까요?\n미수령 목록에서 제외됩니다.`,
     confirmText: "취소 처리",
   });
   if (!ok) return;
-  const prev = {
-    "예약상태": row["예약상태"],
-    "수령여부": row["수령여부"],
-  };
-  mutate(id, { "예약상태": "취소됨", "수령여부": "N" });
+  const snapshot = { ...row };
+  Object.assign(row, { "예약상태": "취소됨", "수령여부": "N" });
   rerenderAll();
-  toast("예약 취소됨", {
-    undo: () => {
-      mutate(id, prev);
-      rerenderAll();
-      hideToast();
-      toast("되돌림");
-    },
-  });
+  try {
+    const r = await apiPost({ action: "cancel", id });
+    Object.assign(row, normalize(r.row));
+    rerenderAll();
+    toast("예약 취소됨", {
+      undo: async () => {
+        hideToast();
+        await restoreReservation(id);
+      },
+    });
+  } catch (e) {
+    Object.assign(row, snapshot);
+    rerenderAll();
+    toast("네트워크 오류: " + e.message);
+  }
 }
 
 async function restoreReservation(id) {
-  mutate(id, { "예약상태": "예약중", "수령여부": "N" });
+  const row = ROWS.find(r => r["예약번호"] === id);
+  if (!row) return;
+  const snapshot = { ...row };
+  Object.assign(row, { "예약상태": "예약중", "수령여부": "N" });
   rerenderAll();
-  toast("예약 복원됨");
+  try {
+    const r = await apiPost({ action: "restore", id });
+    Object.assign(row, normalize(r.row));
+    rerenderAll();
+    toast("예약 복원됨");
+  } catch (e) {
+    Object.assign(row, snapshot);
+    rerenderAll();
+    toast("네트워크 오류: " + e.message);
+  }
 }
 
-// ---------- 렌더: 카드 ----------
+function nowStamp() {
+  const d = new Date();
+  const z = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`;
+}
+
+// ---------- 카드 ----------
 function itemCard(r) {
   const st = statusOf(r);
   const picked = st === "수령완료";
   const cancelled = st === "취소됨";
-  const due = new Date(r["수령예정일"]);
-  const diff = daysBetween(today(), due);
-  const isDelivery = r["수령방법"] === "배달";
-  const isOverdue = !picked && !cancelled && diff < 0;
+
+  const due = parsePeriodDueDate(r["수령기간"]);
+  const diff = due ? daysBetween(today(), due) : null;
+  const isOverdue = !picked && !cancelled && diff !== null && diff < 0;
+  const isToday = !picked && !cancelled && diff === 0;
 
   let dueTag = "";
   if (cancelled) dueTag = `<span class="chip-tag cancelled">취소됨</span>`;
   else if (picked) dueTag = `<span class="chip-tag success">✓ 수령완료</span>`;
+  else if (diff === null) dueTag = "";
   else if (diff < 0) dueTag = `<span class="chip-tag danger">기한 ${-diff}일 지남</span>`;
   else if (diff === 0) dueTag = `<span class="chip-tag warn">오늘 수령</span>`;
   else dueTag = `<span class="chip-tag">D-${diff}</span>`;
-
-  const deliveryTag = isDelivery ? `<span class="chip-tag delivery">🚚 배달</span>` : "";
-  const unpaidTag = r["결제상태"] === "미결제"
-    ? `<span class="chip-tag warn">미결제</span>` : "";
-  const categoryTag = `<span class="chip-tag">${escapeHtml(r["카테고리"])}</span>`;
 
   const memo = r["비고"]
     ? `<div class="item-memo">📝 ${escapeHtml(r["비고"])}</div>` : "";
@@ -253,40 +313,35 @@ function itemCard(r) {
     ? `<span>수령: ${escapeHtml(r["수령일시"])} · ${escapeHtml(r["처리자"] || "-")}</span>`
     : "";
 
-  let actions = "";
+  let actions;
   if (cancelled) {
-    actions = `<button class="btn btn-outline btn-sm" data-action="restore" data-id="${r["예약번호"]}">복원</button>`;
+    actions = `<button class="btn btn-outline btn-sm" data-action="restore" data-id="${escapeHtml(r["예약번호"])}">복원</button>`;
   } else if (picked) {
-    actions = `<button class="btn btn-outline" data-action="toggle" data-id="${r["예약번호"]}">수령 취소</button>`;
+    actions = `<button class="btn btn-outline" data-action="toggle" data-id="${escapeHtml(r["예약번호"])}">수령 취소</button>`;
   } else {
     actions = `
-      <button class="btn btn-success" data-action="toggle" data-id="${r["예약번호"]}">✓ 수령 완료</button>
-      <button class="btn btn-danger-outline" data-action="cancel" data-id="${r["예약번호"]}">예약취소</button>
+      <button class="btn btn-success" data-action="toggle" data-id="${escapeHtml(r["예약번호"])}">✓ 수령 완료</button>
+      <button class="btn btn-danger-outline" data-action="cancel" data-id="${escapeHtml(r["예약번호"])}">예약취소</button>
     `;
   }
 
   const classes = ["item-card"];
   if (picked) classes.push("picked-up");
   if (cancelled) classes.push("cancelled");
-  if (isDelivery && !picked && !cancelled) classes.push("delivery");
   if (isOverdue) classes.push("overdue");
 
   return `
-    <div class="${classes.join(" ")}" data-id="${r["예약번호"]}">
+    <div class="${classes.join(" ")}" data-id="${escapeHtml(r["예약번호"])}">
       <div class="item-tier1">
-        <h3 class="item-title">${escapeHtml(r["물품명"])} <span class="item-qty">×${escapeHtml(r["수량"])}</span></h3>
-        <span class="item-price">${money(r["총금액(원)"])}<span class="unit">원</span></span>
+        <h3 class="item-title">${escapeHtml(r["품목명"])} <span class="item-qty">×${r["수량"]}</span></h3>
+        <span class="item-price">${money(r["품목금액"])}<span class="unit">원</span></span>
       </div>
       <div class="item-tier2">
         ${dueTag}
-        ${deliveryTag}
-        ${unpaidTag}
-        ${categoryTag}
       </div>
       <div class="item-tier3">
-        <span>수령예정 ${fmtDate(r["수령예정일"])}</span>
-        <span>${escapeHtml(r["수령방법"])} · ${escapeHtml(r["결제방식"])}</span>
-        <span>담당 ${escapeHtml(r["담당직원"])}</span>
+        ${r["수령기간"] ? `<span>${escapeHtml(r["수령기간"])}</span>` : ""}
+        <span>단가 ${money(r["단가"])}원</span>
         ${pickedInfo}
       </div>
       ${memo}
@@ -296,10 +351,10 @@ function itemCard(r) {
 }
 
 // ---------- 조회 탭 ----------
-let _lookupState = { phone: null, selectedGroup: null };
+let _lookupState = { phone: null, selectedOrderSeq: null };
 
 function renderLookup() {
-  const { phone, selectedGroup } = _lookupState;
+  const { phone, selectedOrderSeq } = _lookupState;
   const container = $("#lookupResult");
   if (!phone) {
     container.innerHTML = `
@@ -311,7 +366,7 @@ function renderLookup() {
     return;
   }
 
-  let items = RESERVATIONS.filter(r => r["전화번호뒷자리"] === phone);
+  let items = ROWS.filter(r => r["뒷자리"] === phone);
   if (!items.length) {
     container.innerHTML = `
       <div class="empty">
@@ -322,20 +377,19 @@ function renderLookup() {
     return;
   }
 
-  // 중복 — 같은 뒷자리에 예약일자가 다른 묶음이 2개 이상이면 선택
-  const groupsByDate = {};
-  items.forEach(r => { (groupsByDate[r["예약일자"]] ||= []).push(r); });
-  const dateKeys = Object.keys(groupsByDate);
-  if (dateKeys.length > 1 && !selectedGroup) {
-    const picks = dateKeys.sort().reverse().map(d => {
-      const g = groupsByDate[d];
-      const firstItem = g[0]["물품명"];
-      const more = g.length > 1 ? ` 외 ${g.length - 1}건` : "";
+  // 중복: 같은 뒷자리인데 원본순번이 다른 경우 → 주문 블록별 선택
+  const orderSeqs = [...new Set(items.map(i => i["원본순번"]))];
+  if (orderSeqs.length > 1 && selectedOrderSeq == null) {
+    const picks = orderSeqs.sort((a, b) => a - b).map(seq => {
+      const group = items.filter(i => i["원본순번"] === seq);
+      const firstItem = group[0]["품목명"];
+      const more = group.length > 1 ? ` 외 ${group.length - 1}품목` : "";
+      const totalAmt = group.reduce((s, i) => s + Number(i["품목금액"] || 0), 0);
       return `
-        <div class="pick-card" data-pick="${escapeHtml(d)}">
+        <div class="pick-card" data-pick="${seq}">
           <div>
-            <div class="name">${fmtDate(d)} 예약</div>
-            <div class="sub">${escapeHtml(firstItem)}${more} · 총 ${g.length}건</div>
+            <div class="name">주문 #${seq}</div>
+            <div class="sub">${escapeHtml(firstItem)}${more} · ${money(totalAmt)}원</div>
           </div>
           <span class="chip-tag">선택 ▸</span>
         </div>
@@ -343,38 +397,35 @@ function renderLookup() {
     }).join("");
     container.innerHTML = `
       <div class="empty" style="padding:20px">
-        <p class="empty-title">동일 뒷자리에 예약이 ${dateKeys.length}건 있습니다</p>
-        <p class="empty-body">예약일로 구분해주세요.</p>
+        <p class="empty-title">동일 뒷자리 ${phone}에 주문 ${orderSeqs.length}건</p>
+        <p class="empty-body">어떤 주문인지 선택해주세요.</p>
       </div>
       <div class="result" style="margin-top:12px">${picks}</div>
     `;
     $$(".pick-card", container).forEach(c => {
       c.addEventListener("click", () => {
-        _lookupState.selectedGroup = c.dataset.pick;
+        _lookupState.selectedOrderSeq = Number(c.dataset.pick);
         renderLookup();
       });
     });
     return;
   }
 
-  if (selectedGroup) items = items.filter(i => i["예약일자"] === selectedGroup);
+  if (selectedOrderSeq != null) items = items.filter(i => i["원본순번"] === selectedOrderSeq);
 
   const totalCount = items.length;
   const done = items.filter(i => statusOf(i) === "수령완료").length;
   const cancelled = items.filter(i => statusOf(i) === "취소됨").length;
-  const unpaidAmt = items
-    .filter(i => i["결제상태"] === "미결제" && statusOf(i) === "예약중")
-    .reduce((s, i) => s + Number(i["총금액(원)"] || 0), 0);
-
-  const unpaidLine = unpaidAmt > 0
-    ? `<div class="unpaid">받을 금액 ${money(unpaidAmt)}원</div>` : "";
+  const totalAmt = items
+    .filter(i => statusOf(i) !== "취소됨")
+    .reduce((s, i) => s + Number(i["품목금액"] || 0), 0);
+  const seqInfo = selectedOrderSeq != null ? ` · 주문 #${selectedOrderSeq}` : "";
 
   const headerHtml = `
     <div class="customer-header">
       <div>
-        <div class="who">뒷자리 ${escapeHtml(phone)}</div>
-        <div class="meta">예약 ${totalCount}건 · 수령 ${done}/${totalCount - cancelled}${cancelled ? ` · 취소 ${cancelled}` : ""}</div>
-        ${unpaidLine}
+        <div class="who">뒷자리 ${escapeHtml(phone)}${seqInfo}</div>
+        <div class="meta">품목 ${totalCount}건 · 수령 ${done}/${totalCount - cancelled}${cancelled ? ` · 취소 ${cancelled}` : ""} · ${money(totalAmt)}원</div>
       </div>
       <div class="customer-header-actions">
         <button class="btn btn-outline btn-sm" id="btnPickupAll">전체 수령</button>
@@ -393,17 +444,21 @@ function renderLookup() {
       confirmText: "전체 처리",
     });
     if (!ok) return;
-    for (const it of targets) {
-      mutate(it["예약번호"], {
-        "수령여부": "Y",
-        "예약상태": "수령완료",
-        "수령일시": nowStamp(),
-        "처리자": OPERATOR,
-        "결제상태": it["결제상태"] === "미결제" ? "완료" : it["결제상태"],
-      });
+    setBusy(true, "처리 중…");
+    try {
+      for (const it of targets) {
+        await apiPost({ action: "pickup", id: it["예약번호"], state: true });
+        Object.assign(it, { "수령여부": "Y", "예약상태": "수령완료", "수령일시": nowStamp(), "처리자": OPERATOR });
+      }
+      rerenderAll();
+      toast(`${targets.length}건 수령 완료`);
+    } catch (e) {
+      toast("일부 실패: " + e.message);
+      await loadActive(ACTIVE_DATE);
+      rerenderAll();
+    } finally {
+      setBusy(false);
     }
-    rerenderAll();
-    toast(`${targets.length}건 수령 완료`);
   });
 
   bindCardActions(container);
@@ -415,7 +470,7 @@ function bindCardActions(root) {
       const id = btn.dataset.id;
       const action = btn.dataset.action;
       if (action === "toggle") {
-        const cur = RESERVATIONS.find(r => r["예약번호"] === id);
+        const cur = ROWS.find(r => r["예약번호"] === id);
         setPickup(id, statusOf(cur) !== "수령완료");
       } else if (action === "cancel") {
         cancelReservation(id);
@@ -427,24 +482,26 @@ function bindCardActions(root) {
 }
 
 // ---------- 미수령 탭 ----------
-const PENDING_FILTER = { seg: "all" }; // all | overdue | today | future
+const PENDING_FILTER = { seg: "all" };
 
 function renderPending() {
-  const onlyStore = $("#filterStoreOnly").checked;
-  const onlyDelivery = $("#filterDeliveryOnly").checked;
+  const pendingAll = ROWS.filter(r => statusOf(r) === "예약중");
+  const due = parsePeriodDueDate(PERIOD_TEXT);
+  const diffOf = () => due ? daysBetween(today(), due) : null;
+  const d = diffOf();
 
-  const pendingAll = RESERVATIONS.filter(r => statusOf(r) === "예약중");
-  const diffOf = r => daysBetween(today(), new Date(r["수령예정일"]));
+  // 수령기간 1개만 존재하므로 한 주 안에선 모든 건이 같은 D-day
+  // 세그먼트 분류는 해당 주의 수령 마지막일 기준
   const counts = {
     all: pendingAll.length,
-    overdue: pendingAll.filter(r => diffOf(r) < 0).length,
-    today: pendingAll.filter(r => diffOf(r) === 0).length,
-    future: pendingAll.filter(r => diffOf(r) > 0).length,
+    overdue: d !== null && d < 0 ? pendingAll.length : 0,
+    today: d === 0 ? pendingAll.length : 0,
+    future: d !== null && d > 0 ? pendingAll.length : 0,
   };
 
-  // 세그먼트 숫자/활성 업데이트
   const setCount = (id, n) => {
     const el = $("#segCount" + id);
+    if (!el) return;
     el.textContent = n;
     el.classList.toggle("zero", n === 0);
   };
@@ -457,19 +514,16 @@ function renderPending() {
   });
 
   let pending = pendingAll;
-  if (PENDING_FILTER.seg === "overdue") pending = pending.filter(r => diffOf(r) < 0);
-  else if (PENDING_FILTER.seg === "today") pending = pending.filter(r => diffOf(r) === 0);
-  else if (PENDING_FILTER.seg === "future") pending = pending.filter(r => diffOf(r) > 0);
-
-  if (onlyStore) pending = pending.filter(r => r["수령방법"] !== "배달");
-  if (onlyDelivery) pending = pending.filter(r => r["수령방법"] === "배달");
+  if (PENDING_FILTER.seg === "overdue" && !(d !== null && d < 0)) pending = [];
+  else if (PENDING_FILTER.seg === "today" && d !== 0) pending = [];
+  else if (PENDING_FILTER.seg === "future" && !(d !== null && d > 0)) pending = [];
 
   const container = $("#pendingResult");
   if (!pending.length) {
     const msg = {
       overdue: { t: "기한 지난 건이 없습니다", b: "다행히 모두 제때 찾아갔어요." },
       today:   { t: "오늘 수령 예정이 없습니다", b: "오늘은 여유로운 하루네요." },
-      future:  { t: "예정된 미수령이 없습니다", b: "앞으로의 예약이 깔끔합니다." },
+      future:  { t: "예정된 미수령이 없습니다", b: "이번 주 예약이 깔끔합니다." },
       all:     { t: "미수령 예약이 없습니다", b: "오늘도 수고하셨습니다." },
     }[PENDING_FILTER.seg] || { t: "해당 건이 없습니다", b: "" };
     container.innerHTML = `
@@ -481,35 +535,41 @@ function renderPending() {
     return;
   }
 
-  // 뒷자리+예약일자 기준 그룹핑
+  // 뒷자리+원본순번 그룹
   const groups = {};
   pending.forEach(r => {
-    const key = `${r["전화번호뒷자리"]}|${r["예약일자"]}`;
-    (groups[key] ||= { phone: r["전화번호뒷자리"], reservedAt: r["예약일자"], items: [] }).items.push(r);
+    const key = `${r["뒷자리"]}-${r["원본순번"]}`;
+    (groups[key] ||= {
+      phone: r["뒷자리"],
+      seq: r["원본순번"],
+      items: [],
+    }).items.push(r);
   });
 
   const keys = Object.keys(groups).sort((a, b) => {
-    const ma = Math.min(...groups[a].items.map(i => daysBetween(today(), new Date(i["수령예정일"]))));
-    const mb = Math.min(...groups[b].items.map(i => daysBetween(today(), new Date(i["수령예정일"]))));
-    return ma - mb;
+    const ga = groups[a]; const gb = groups[b];
+    return ga.seq - gb.seq;
   });
 
   container.innerHTML = keys.map(k => {
     const g = groups[k];
-    const minDiff = Math.min(...g.items.map(i => daysBetween(today(), new Date(i["수령예정일"]))));
+    const gd = due ? daysBetween(today(), due) : null;
     let klass = "pending-group";
     let statusTag;
-    if (minDiff < 0) { klass += " overdue"; statusTag = `<span class="chip-tag danger">기한 ${-minDiff}일 지남</span>`; }
-    else if (minDiff === 0) { klass += " today"; statusTag = `<span class="chip-tag warn">오늘 수령</span>`; }
-    else statusTag = `<span class="chip-tag">D-${minDiff}</span>`;
+    if (gd === null) statusTag = `<span class="chip-tag">수령기간 없음</span>`;
+    else if (gd < 0) { klass += " overdue"; statusTag = `<span class="chip-tag danger">기한 ${-gd}일 지남</span>`; }
+    else if (gd === 0) { klass += " today"; statusTag = `<span class="chip-tag warn">오늘 수령</span>`; }
+    else statusTag = `<span class="chip-tag">D-${gd}</span>`;
+
+    const totalAmt = g.items.reduce((s, i) => s + Number(i["품목금액"] || 0), 0);
 
     return `
-      <details class="${klass}" ${minDiff <= 0 ? "open" : ""}>
+      <details class="${klass}" ${gd !== null && gd <= 0 ? "open" : ""}>
         <summary>
           <span class="caret">▸</span>
           <div class="name-block">
-            <div class="name">뒷자리 ${escapeHtml(g.phone)} <span style="color:var(--muted);font-size:13px;font-weight:600">(${g.items.length}건)</span></div>
-            <div class="sub">예약일 ${fmtDate(g.reservedAt)}</div>
+            <div class="name">뒷자리 ${escapeHtml(g.phone)} · 주문 #${g.seq} <span style="color:var(--muted);font-size:13px;font-weight:600">(${g.items.length}품목)</span></div>
+            <div class="sub">${money(totalAmt)}원</div>
           </div>
           ${statusTag}
         </summary>
@@ -523,14 +583,14 @@ function renderPending() {
   bindCardActions(container);
 }
 
-// ---------- 전체 시트 ----------
+// ---------- 전체 시트 탭 ----------
 const SHEET_STATE = { sortKey: null, sortDir: 1, query: "" };
-const NUMERIC_COLS = new Set(["수량", "단가(원)", "할인율(%)", "총금액(원)"]);
-const SHEET_HIDDEN_COLS = new Set(["예약번호", "물품ID"]);
+const NUMERIC_COLS = new Set(["수량", "단가", "품목금액", "원본순번", "예약내품목순서", "행합계수량"]);
+const SHEET_HIDDEN_COLS = new Set(["예약번호", "원본순번", "예약내품목순서", "원본뒷자리", "원본품목", "행합계수량"]);
 
 function renderSheet() {
   const table = $("#sheetTable");
-  if (!RESERVATIONS.length) {
+  if (!ROWS.length) {
     table.querySelector("thead").innerHTML = "";
     table.querySelector("tbody").innerHTML = "";
     $("#sheetCount").textContent = "0건";
@@ -539,7 +599,7 @@ function renderSheet() {
   const headers = HEADERS.filter(h => !SHEET_HIDDEN_COLS.has(h));
   const q = SHEET_STATE.query.trim().toLowerCase();
 
-  let rows = RESERVATIONS.slice();
+  let rows = ROWS.slice();
   if (q) {
     rows = rows.filter(r =>
       headers.some(h => String(r[h] ?? "").toLowerCase().includes(q))
@@ -566,22 +626,19 @@ function renderSheet() {
 
   const tbody = rows.map(r => {
     const st = statusOf(r);
-    const due = new Date(r["수령예정일"]);
-    const overdueCell = st === "예약중" && daysBetween(today(), due) < 0;
     return "<tr>" + headers.map(h => {
       const v = r[h] ?? "";
       let cls = "";
       if (NUMERIC_COLS.has(h)) cls += " num";
       if (h === "수령여부") cls += v === "Y" ? " pickup-y" : " pickup-n";
       if (h === "예약상태" && v === "취소됨") cls += " status-cancel";
-      if (h === "수령예정일" && overdueCell) cls += " overdue-cell";
       return `<td class="${cls.trim()}">${escapeHtml(v)}</td>`;
     }).join("") + "</tr>";
   }).join("");
 
   table.querySelector("thead").innerHTML = thead;
   table.querySelector("tbody").innerHTML = tbody;
-  $("#sheetCount").textContent = `${rows.length}건 / 총 ${RESERVATIONS.length}건`;
+  $("#sheetCount").textContent = `${rows.length}건 / 총 ${ROWS.length}건`;
 
   $$("#sheetTable thead th").forEach(th => {
     th.addEventListener("click", () => {
@@ -593,9 +650,9 @@ function renderSheet() {
   });
 }
 
-// ---------- 공통 재렌더 ----------
+// ---------- 공통 ----------
 function refreshBadge() {
-  const count = RESERVATIONS.filter(r => statusOf(r) === "예약중").length;
+  const count = ROWS.filter(r => statusOf(r) === "예약중").length;
   const badge = $("#pendingBadge");
   badge.textContent = count;
   badge.style.display = count ? "inline-block" : "none";
@@ -606,7 +663,6 @@ function rerenderAll() {
   if ($("#tab-lookup").classList.contains("active")) renderLookup();
   if ($("#tab-pending").classList.contains("active")) renderPending();
   if ($("#tab-sheet").classList.contains("active")) renderSheet();
-  // 숨겨진 탭은 다음 진입 시 자동 렌더
 }
 
 // ---------- 이벤트 ----------
@@ -634,63 +690,69 @@ function bindSearch() {
       input.focus();
       return;
     }
-    _lookupState = { phone: v, selectedSurname: null };
+    _lookupState = { phone: v, selectedOrderSeq: null };
     renderLookup();
   };
   $("#btnSearch").addEventListener("click", run);
   $("#btnClear").addEventListener("click", () => {
     input.value = "";
-    _lookupState = { phone: null, selectedSurname: null };
+    _lookupState = { phone: null, selectedOrderSeq: null };
     renderLookup();
     input.focus();
   });
   input.addEventListener("keydown", e => { if (e.key === "Enter") run(); });
   input.addEventListener("input", () => {
     input.value = input.value.replace(/\D/g, "").slice(0, 4);
-    // 자동조회 제거 — 명시적 조회 버튼 사용
   });
 }
 
 function bindActions() {
-  $("#btnExport").addEventListener("click", () => {
-    const csv = toCsv(RESERVATIONS, HEADERS);
-    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `reservations-${new Date().toISOString().slice(0,10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(a.href);
-    toast("CSV 저장됨");
-  });
-
-  $("#btnReset").addEventListener("click", async () => {
+  $("#btnImport").addEventListener("click", async () => {
     const ok = await confirmModal({
-      title: "로컬 변경 초기화",
-      body: "이 기기에서 체크한 수령/취소 기록을 지우고 원본 CSV 상태로 되돌립니다.",
-      confirmText: "초기화",
-    });
-    if (!ok) return;
-    localStorage.removeItem(STORAGE_KEY);
-    init();
-  });
-
-  $("#fileUpload").addEventListener("change", async e => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    const keep = await confirmModal({
-      title: "CSV 업로드",
-      body: `${file.name} 파일을 불러옵니다.\n이 기기의 수령 기록(오버레이)은 유지됩니다.`,
+      title: "원본 시트에서 불러오기",
+      body: "사장님 시트의 최신 상태로 다시 파싱합니다.\n이미 수령 체크한 건은 자동 복원됩니다.",
       confirmText: "불러오기",
     });
-    if (!keep) { e.target.value = ""; return; }
-    localStorage.setItem(CSV_CACHE_KEY, text);
-    loadFromText(text);
-    rerenderAll();
-    toast("CSV 로드됨");
-    e.target.value = "";
+    if (!ok) return;
+    setBusy(true, "원본 시트 파싱 중…");
+    try {
+      const r = await apiPost({ action: "import" });
+      await loadSnapshots();
+      await loadActive(r.date || ACTIVE_DATE);
+      rerenderAll();
+      toast(`${r.count || r.orders || 0}건 불러옴 · ${r.restored || 0}건 복원`);
+    } catch (e) {
+      toast("불러오기 실패: " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  $("#btnRefresh").addEventListener("click", async () => {
+    setBusy(true);
+    try {
+      await loadSnapshots();
+      await loadActive(ACTIVE_DATE);
+      rerenderAll();
+      toast("새로고침됨");
+    } catch (e) {
+      toast("실패: " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  $("#snapshotPicker")?.addEventListener("change", async e => {
+    const date = e.target.value;
+    setBusy(true);
+    try {
+      await loadActive(date);
+      rerenderAll();
+    } catch (err) {
+      toast("실패: " + err.message);
+    } finally {
+      setBusy(false);
+    }
   });
 
   $("#toastUndo").addEventListener("click", () => {
@@ -703,14 +765,6 @@ function bindActions() {
       renderPending();
     });
   });
-  $("#filterStoreOnly").addEventListener("change", e => {
-    if (e.target.checked) $("#filterDeliveryOnly").checked = false;
-    renderPending();
-  });
-  $("#filterDeliveryOnly").addEventListener("change", e => {
-    if (e.target.checked) $("#filterStoreOnly").checked = false;
-    renderPending();
-  });
 
   $("#sheetSearch").addEventListener("input", e => {
     SHEET_STATE.query = e.target.value;
@@ -719,38 +773,32 @@ function bindActions() {
 }
 
 // ---------- 초기화 ----------
-function loadFromText(text) {
-  const { headers, rows } = parseCsv(text);
-  HEADERS = headers;
-  const overlay = loadOverlay();
-  RESERVATIONS = applyOverlay(rows, overlay);
-  _loaded = true;
-}
-
 async function init() {
+  setBusy(true, "서버에 연결 중…");
   try {
-    const res = await fetch(DEFAULT_CSV_URL + "?v=" + Date.now(), { cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const text = await res.text();
-    localStorage.setItem(CSV_CACHE_KEY, text);
-    loadFromText(text);
-  } catch (e) {
-    const cached = localStorage.getItem(CSV_CACHE_KEY);
-    if (cached) {
-      loadFromText(cached);
-      toast("오프라인 — 캐시 데이터 사용");
-    } else {
+    await loadSnapshots();
+    if (!ACTIVE_DATE) {
       $("#lookupResult").innerHTML = `
         <div class="empty">
-          <div class="emoji">⚠️</div>
-          <p class="empty-title">데이터 로드 실패</p>
-          <p class="empty-body">${escapeHtml(e.message)} — 상단 '⬆ 업로드'로 CSV를 직접 올려주세요.</p>
+          <div class="emoji">📭</div>
+          <p class="empty-title">아직 스냅샷이 없습니다</p>
+          <p class="empty-body">상단 '📥 불러오기' 버튼을 눌러 원본 시트에서 가져오세요.</p>
         </div>`;
+      setBusy(false);
       return;
     }
+    await loadActive(ACTIVE_DATE);
+    rerenderAll();
+  } catch (e) {
+    $("#lookupResult").innerHTML = `
+      <div class="empty">
+        <div class="emoji">⚠️</div>
+        <p class="empty-title">서버 연결 실패</p>
+        <p class="empty-body">${escapeHtml(e.message)}</p>
+      </div>`;
+  } finally {
+    setBusy(false);
   }
-  rerenderAll();
-  if (!_lookupState.phone) renderLookup();
 }
 
 bindTabs();
