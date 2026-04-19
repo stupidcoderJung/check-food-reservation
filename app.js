@@ -1,4 +1,4 @@
-// 동네슈퍼 예약관리 — POC v2
+// GS Fresh 예약관리 — POC v2
 // - 뒷자리 중복 처리, 예약 취소, 수령 Undo, tel 링크, 배달 구분, CSV 업로드, 하단 탭바, UX 폴리시
 
 const DEFAULT_CSV_URL = "reservations.csv";
