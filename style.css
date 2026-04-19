@@ -52,13 +52,21 @@ body {
   border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 0 rgba(0,0,0,.02);
 }
-.topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 0 0 auto; }
 .topbar h1 {
   margin: 0;
   font-size: 18px;
   font-weight: 800;
   letter-spacing: -0.2px;
   white-space: nowrap;
+}
+.topbar-center {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 0;
+  padding: 0 10px;
 }
 .topbar-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .snapshot-picker {
@@ -71,6 +79,42 @@ body {
   font-family: inherit;
   color: var(--text);
   max-width: 180px;
+}
+.snapshot-picker-lg {
+  font-size: 15px;
+  font-weight: 700;
+  padding: 10px 36px 10px 16px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  border: 2px solid var(--primary);
+  max-width: 420px;
+  min-width: 220px;
+  width: 100%;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23166534' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  text-align: center;
+  text-align-last: center;
+}
+.snapshot-picker-lg:hover {
+  background-color: #bbf7d0;
+}
+.snapshot-picker-lg:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(21, 128, 61, .2);
+}
+
+/* 모바일: 제목을 줄이고 picker에 공간 양보 */
+@media (max-width: 680px) {
+  .topbar h1 { font-size: 15px; }
+  .topbar h1::before { content: "🛒"; }
+  .topbar h1 span { display: none; }
+  .snapshot-picker-lg { font-size: 13px; min-width: 160px; padding: 8px 30px 8px 12px; }
+  .btn-ghost { font-size: 12px; padding: 0 8px; }
 }
 
 /* ---------- Bottom tabbar ---------- */

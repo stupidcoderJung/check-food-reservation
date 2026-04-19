@@ -13,6 +13,9 @@
     <div class="topbar-left">
       <h1>🛒 GS Fresh 예약관리</h1>
     </div>
+    <div class="topbar-center">
+      <select id="snapshotPicker" class="snapshot-picker snapshot-picker-lg" aria-label="스냅샷 선택"></select>
+    </div>
     <div class="topbar-actions">
       <button id="btnImport" class="btn btn-ghost" title="원본 시트에서 다시 불러오기">📥 불러오기</button>
       <button id="btnRefresh" class="btn btn-ghost" title="새로고침">↻</button>
@@ -77,7 +80,6 @@
           placeholder="🔎 품목명·뒷자리·비고 검색"
           autocomplete="off"
         />
-        <select id="snapshotPicker" class="snapshot-picker"></select>
         <div class="sheet-meta">
           <span id="sheetCount">0건</span>
         </div>
