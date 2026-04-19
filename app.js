@@ -85,25 +85,43 @@ function hideToast() {
 }
 
 // ---------- 모달 ----------
-function confirmModal({ title, body, confirmText = "확인", danger = false }) {
+function confirmModal({ title, body, confirmText = "확인", danger = false, input }) {
   return new Promise(resolve => {
     $("#modalTitle").textContent = title;
     $("#modalBody").textContent = body;
     const c = $("#modalConfirm");
     c.textContent = confirmText;
     c.className = "btn " + (danger ? "btn-success" : "btn-primary");
+    const inputWrap = $("#modalInputWrap");
+    const inputEl = $("#modalInput");
+    if (input) {
+      inputWrap.hidden = false;
+      inputEl.value = input.default ?? "";
+      inputEl.placeholder = input.placeholder ?? "";
+      $("#modalHint").textContent = input.hint ?? "";
+      setTimeout(() => inputEl.focus(), 50);
+    } else {
+      inputWrap.hidden = true;
+      inputEl.value = "";
+    }
     const m = $("#modal");
     m.hidden = false;
     const close = v => {
       m.hidden = true;
       c.removeEventListener("click", onOk);
       $("#modalCancel").removeEventListener("click", onNo);
+      inputEl.removeEventListener("keydown", onKey);
       resolve(v);
     };
-    const onOk = () => close(true);
-    const onNo = () => close(false);
+    const onOk = () => close(input ? { confirmed: true, value: inputEl.value.trim() } : true);
+    const onNo = () => close(input ? { confirmed: false } : false);
+    const onKey = e => {
+      if (e.key === "Enter") { e.preventDefault(); onOk(); }
+      else if (e.key === "Escape") { onNo(); }
+    };
     c.addEventListener("click", onOk);
     $("#modalCancel").addEventListener("click", onNo);
+    if (input) inputEl.addEventListener("keydown", onKey);
   });
 }
 
@@ -190,11 +208,22 @@ function updatePeriodBadge() {
   // 수령기간 배지 제거됨 (no-op)
 }
 
+function formatSnapshotLabel(id) {
+  // "2026-04-19" 또는 "2026-04-19_오전분"
+  const parts = id.split("_");
+  if (parts.length < 2) return id;
+  const date = parts[0];
+  const label = parts.slice(1).join("_");
+  return `${date} · ${label}`;
+}
+
 function refreshSnapshotPicker() {
   const sel = $("#snapshotPicker");
   if (!sel) return;
-  sel.innerHTML = SNAPSHOTS.map(d =>
-    `<option value="${d}" ${d === ACTIVE_DATE ? "selected" : ""}>${d}</option>`
+  // 최신이 위로 오도록 정렬 역순
+  const sorted = SNAPSHOTS.slice().sort().reverse();
+  sel.innerHTML = sorted.map(d =>
+    `<option value="${escapeHtml(d)}" ${d === ACTIVE_DATE ? "selected" : ""}>${escapeHtml(formatSnapshotLabel(d))}</option>`
   ).join("");
   sel.disabled = SNAPSHOTS.length <= 1;
 }
@@ -757,19 +786,27 @@ function bindSearch() {
 
 function bindActions() {
   $("#btnImport").addEventListener("click", async () => {
-    const ok = await confirmModal({
+    const res = await confirmModal({
       title: "원본 시트에서 불러오기",
-      body: "사장님 시트의 최신 상태로 다시 파싱합니다.\n이미 수령 체크한 건은 자동 복원됩니다.",
+      body: "스냅샷에 제목을 붙이면 같은 날짜에 여러 배치를 분리 관리할 수 있습니다.\n비워두면 날짜만 사용합니다.",
       confirmText: "불러오기",
+      input: {
+        placeholder: "예: 오전분, 추가입고, 오후분",
+        hint: "최대 30자 · 특수문자(/ \\ : ? * [ ])는 자동으로 '-'로 변환됩니다.",
+        default: "",
+      },
     });
-    if (!ok) return;
+    if (!res || !res.confirmed) return;
+    const label = (res.value || "").trim();
     setBusy(true, "원본 시트 파싱 중…");
     try {
-      const r = await apiPost({ action: "import" });
+      const r = await apiPost({ action: "import", label });
       await loadSnapshots();
-      await loadActive(r.date || ACTIVE_DATE);
+      const target = r.snapshotId || r.date || ACTIVE_DATE;
+      await loadActive(target);
       rerenderAll();
-      toast(`${r.count || r.orders || 0}건 불러옴 · ${r.restored || 0}건 복원`);
+      const snapLabel = r.label ? ` (${r.label})` : "";
+      toast(`${r.count || 0}건 불러옴${snapLabel} · ${r.restored || 0}건 복원`);
     } catch (e) {
       toast("불러오기 실패: " + e.message);
     } finally {

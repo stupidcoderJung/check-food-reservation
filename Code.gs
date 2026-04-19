@@ -88,7 +88,7 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents || '{}');
     const action = body.action;
     if (action === 'import') {
-      const result = importFromSource();
+      const result = importFromSource(body.label);
       return json({ ok: true, ...result });
     }
     if (action === 'pickup') return json({ ok: true, row: setPickup(body.id, body.state === true || body.state === 'Y') });
@@ -416,12 +416,14 @@ function colLetter(idx0) {
 }
 
 // ──────────────── Import (스냅샷 생성) ────────────────
-function importFromSource() {
+function importFromSource(label) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const { orders, items, period } = parseSource();
 
   const today = formatDate(new Date());
-  const tabName = APP_STATUS_PREFIX + today;
+  const labelSafe = sanitizeLabel(label);
+  const snapshotId = labelSafe ? `${today}_${labelSafe}` : today;
+  const tabName = APP_STATUS_PREFIX + snapshotId;
 
   // 수령 상태 복원:
   //   기존 스냅샷이 있으면 (원본순번|뒷자리|품목명|예약내품목순서) 조합 기준으로
@@ -430,7 +432,7 @@ function importFromSource() {
   let restoredCount = 0;
   const existing = ss.getSheetByName(tabName);
   if (existing) {
-    const prev = readSnapshot(today);
+    const prev = readSnapshot(snapshotId);
     prev.forEach(r => {
       const k = statusKey(r['원본순번'], r['뒷자리'], r['품목명'], r['예약내품목순서']);
       prevStatus[k] = {
@@ -484,10 +486,12 @@ function importFromSource() {
   sheet.setColumnWidth(5, 180);  // 품목명
   sheet.setColumnWidth(11, 180); // 수령기간
 
-  setActiveSnapshotDate(today);
+  setActiveSnapshotDate(snapshotId);
 
   const summary = {
     date: today,
+    snapshotId: snapshotId,
+    label: labelSafe || null,
     tabName: tabName,
     count: rows.length,
     itemCount: items.length,
@@ -497,6 +501,18 @@ function importFromSource() {
   };
   Logger.log('[importFromSource] %s', JSON.stringify(summary));
   return summary;
+}
+
+// 탭 이름에 사용할 수 있는 라벨로 정규화
+// - 구글 시트 탭명 금지 문자: [] * ? / \ : 및 긴 공백
+// - 길이 제한 적용
+function sanitizeLabel(label) {
+  if (!label) return '';
+  return String(label)
+    .replace(/[\[\]\*\?\/\\:]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 30);
 }
 
 function statusKey(순번, 뒷자리, 품목명, 예약내품목순서) {

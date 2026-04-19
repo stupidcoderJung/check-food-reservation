@@ -708,6 +708,25 @@ main { padding: 14px; max-width: 860px; margin: 0 auto; }
   gap: 8px;
 }
 .modal-actions .btn { flex: 1; }
+.modal-input {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 16px;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.modal-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.modal-hint {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
 
 /* ---------- Toast ---------- */
 .toast {
