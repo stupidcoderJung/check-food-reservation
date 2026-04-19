@@ -126,7 +126,8 @@ function setActiveSnapshotDate(date) {
     cfg.getRange('A1').setValue('활성스냅샷날짜');
     cfg.hideSheet();
   }
-  cfg.getRange('B1').setValue(date);
+  // Sheets가 YYYY-MM-DD 문자열을 자동으로 Date로 파싱하지 않도록 plain text로 저장
+  cfg.getRange('B1').setNumberFormat('@').setValue(String(date));
 }
 
 function getActiveSnapshotDate() {
@@ -134,6 +135,7 @@ function getActiveSnapshotDate() {
   const cfg = ss.getSheetByName(CONFIG_SHEET_NAME);
   if (cfg) {
     const v = cfg.getRange('B1').getValue();
+    if (v instanceof Date) return formatDate(v);
     if (v) return String(v);
   }
   const snaps = listSnapshots();
