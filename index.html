@@ -45,19 +45,36 @@
 
     <!-- 미수령 탭 -->
     <section id="tab-pending" class="tab-panel">
-      <div class="summary-bar" id="summaryBar"></div>
       <div class="pending-header">
         <h2>미수령 현황</h2>
-        <div class="filter-row">
-          <label class="chip">
-            <input type="checkbox" id="filterOverdue" />
-            기한지남만
-          </label>
-          <label class="chip">
-            <input type="checkbox" id="filterStoreOnly" />
-            매장수령만
-          </label>
-        </div>
+      </div>
+      <div class="segmented" id="segFilter" role="tablist" aria-label="기간 필터">
+        <button class="seg active" data-seg="all" role="tab">
+          <span class="seg-label">전체</span>
+          <span class="seg-count" id="segCountAll">0</span>
+        </button>
+        <button class="seg" data-seg="overdue" role="tab">
+          <span class="seg-label">🚨 기한지남</span>
+          <span class="seg-count" id="segCountOverdue">0</span>
+        </button>
+        <button class="seg" data-seg="today" role="tab">
+          <span class="seg-label">⏰ 오늘</span>
+          <span class="seg-count" id="segCountToday">0</span>
+        </button>
+        <button class="seg" data-seg="future" role="tab">
+          <span class="seg-label">📅 예정</span>
+          <span class="seg-count" id="segCountFuture">0</span>
+        </button>
+      </div>
+      <div class="sub-filter-row">
+        <label class="chip-toggle">
+          <input type="checkbox" id="filterStoreOnly" />
+          <span>🏪 매장수령만</span>
+        </label>
+        <label class="chip-toggle">
+          <input type="checkbox" id="filterDeliveryOnly" />
+          <span>🚚 배달만</span>
+        </label>
       </div>
       <div id="pendingResult" class="result"></div>
     </section>

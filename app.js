@@ -427,44 +427,56 @@ function bindCardActions(root) {
 }
 
 // ---------- 미수령 탭 ----------
+const PENDING_FILTER = { seg: "all" }; // all | overdue | today | future
+
 function renderPending() {
-  const onlyOverdue = $("#filterOverdue").checked;
   const onlyStore = $("#filterStoreOnly").checked;
+  const onlyDelivery = $("#filterDeliveryOnly").checked;
 
   const pendingAll = RESERVATIONS.filter(r => statusOf(r) === "예약중");
-  const overdue = pendingAll.filter(r => daysBetween(today(), new Date(r["수령예정일"])) < 0);
-  const todayCnt = pendingAll.filter(r => daysBetween(today(), new Date(r["수령예정일"])) === 0).length;
-  const future = pendingAll.length - overdue.length - todayCnt;
+  const diffOf = r => daysBetween(today(), new Date(r["수령예정일"]));
+  const counts = {
+    all: pendingAll.length,
+    overdue: pendingAll.filter(r => diffOf(r) < 0).length,
+    today: pendingAll.filter(r => diffOf(r) === 0).length,
+    future: pendingAll.filter(r => diffOf(r) > 0).length,
+  };
 
-  $("#summaryBar").innerHTML = `
-    <button class="${overdue.length ? "danger" : ""}" data-filter="overdue">
-      <span class="num">${overdue.length}</span><span>기한지남</span>
-    </button>
-    <button class="${todayCnt ? "warn" : ""}" data-filter="today">
-      <span class="num">${todayCnt}</span><span>오늘 수령</span>
-    </button>
-    <button data-filter="future">
-      <span class="num">${future}</span><span>예정</span>
-    </button>
-  `;
-  $$("[data-filter]", $("#summaryBar")).forEach(b => {
-    b.addEventListener("click", () => {
-      $("#filterOverdue").checked = b.dataset.filter === "overdue";
-      renderPending();
-    });
+  // 세그먼트 숫자/활성 업데이트
+  const setCount = (id, n) => {
+    const el = $("#segCount" + id);
+    el.textContent = n;
+    el.classList.toggle("zero", n === 0);
+  };
+  setCount("All", counts.all);
+  setCount("Overdue", counts.overdue);
+  setCount("Today", counts.today);
+  setCount("Future", counts.future);
+  $$("#segFilter .seg").forEach(b => {
+    b.classList.toggle("active", b.dataset.seg === PENDING_FILTER.seg);
   });
 
   let pending = pendingAll;
-  if (onlyOverdue) pending = pending.filter(r => daysBetween(today(), new Date(r["수령예정일"])) < 0);
+  if (PENDING_FILTER.seg === "overdue") pending = pending.filter(r => diffOf(r) < 0);
+  else if (PENDING_FILTER.seg === "today") pending = pending.filter(r => diffOf(r) === 0);
+  else if (PENDING_FILTER.seg === "future") pending = pending.filter(r => diffOf(r) > 0);
+
   if (onlyStore) pending = pending.filter(r => r["수령방법"] !== "배달");
+  if (onlyDelivery) pending = pending.filter(r => r["수령방법"] === "배달");
 
   const container = $("#pendingResult");
   if (!pending.length) {
+    const msg = {
+      overdue: { t: "기한 지난 건이 없습니다", b: "다행히 모두 제때 찾아갔어요." },
+      today:   { t: "오늘 수령 예정이 없습니다", b: "오늘은 여유로운 하루네요." },
+      future:  { t: "예정된 미수령이 없습니다", b: "앞으로의 예약이 깔끔합니다." },
+      all:     { t: "미수령 예약이 없습니다", b: "오늘도 수고하셨습니다." },
+    }[PENDING_FILTER.seg] || { t: "해당 건이 없습니다", b: "" };
     container.innerHTML = `
       <div class="empty">
         <div class="emoji">✅</div>
-        <p class="empty-title">미수령 예약이 없습니다</p>
-        <p class="empty-body">오늘도 수고하셨습니다.</p>
+        <p class="empty-title">${msg.t}</p>
+        <p class="empty-body">${msg.b}</p>
       </div>`;
     return;
   }
@@ -685,8 +697,20 @@ function bindActions() {
     if (_undoAction) _undoAction();
   });
 
-  $("#filterOverdue").addEventListener("change", renderPending);
-  $("#filterStoreOnly").addEventListener("change", renderPending);
+  $$("#segFilter .seg").forEach(b => {
+    b.addEventListener("click", () => {
+      PENDING_FILTER.seg = b.dataset.seg;
+      renderPending();
+    });
+  });
+  $("#filterStoreOnly").addEventListener("change", e => {
+    if (e.target.checked) $("#filterDeliveryOnly").checked = false;
+    renderPending();
+  });
+  $("#filterDeliveryOnly").addEventListener("change", e => {
+    if (e.target.checked) $("#filterStoreOnly").checked = false;
+    renderPending();
+  });
 
   $("#sheetSearch").addEventListener("input", e => {
     SHEET_STATE.query = e.target.value;
