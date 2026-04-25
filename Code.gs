@@ -103,10 +103,10 @@ function doPost(e) {
       const result = importFromSource(body.label);
       return json({ ok: true, ...result });
     }
-    if (action === 'pickup') return json({ ok: true, row: setPickup(body.id, body.state === true || body.state === 'Y') });
-    if (action === 'cancel') return json({ ok: true, row: setStatus(body.id, '취소됨', 'N') });
-    if (action === 'restore') return json({ ok: true, row: setStatus(body.id, '예약중', 'N') });
-    if (action === 'update') return json({ ok: true, row: updateCell(body.id, body.field, body.value) });
+    if (action === 'pickup') return json({ ok: true, row: setPickup(body.id, body.state === true || body.state === 'Y', body.date) });
+    if (action === 'cancel') return json({ ok: true, row: setStatus(body.id, '취소됨', 'N', body.date) });
+    if (action === 'restore') return json({ ok: true, row: setStatus(body.id, '예약중', 'N', body.date) });
+    if (action === 'update') return json({ ok: true, row: updateCell(body.id, body.field, body.value, body.date) });
     if (action === 'seedHistorical') return json({ ok: true, ...seedHistorical() });
     if (action === 'clearSeeded') return json({ ok: true, ...clearSeeded() });
     return json({ ok: false, error: 'unknown action: ' + action });
@@ -560,8 +560,8 @@ function readSnapshot(date) {
 }
 
 // ──────────────── 상태 업데이트 ────────────────
-function setPickup(id, yes) {
-  const { sheet, rowIdx } = findRowById(id);
+function setPickup(id, yes, date) {
+  const { sheet, rowIdx } = findRowById(id, date);
   const headerIdx = Object.fromEntries(SCHEMA.map((h, i) => [h, i + 1]));
   if (yes) {
     sheet.getRange(rowIdx, headerIdx['수령여부']).setValue('Y');
@@ -577,8 +577,8 @@ function setPickup(id, yes) {
   return getRow(sheet, rowIdx);
 }
 
-function setStatus(id, status, y) {
-  const { sheet, rowIdx } = findRowById(id);
+function setStatus(id, status, y, date) {
+  const { sheet, rowIdx } = findRowById(id, date);
   const headerIdx = Object.fromEntries(SCHEMA.map((h, i) => [h, i + 1]));
   sheet.getRange(rowIdx, headerIdx['예약상태']).setValue(status);
   sheet.getRange(rowIdx, headerIdx['수령여부']).setValue(y);
@@ -592,11 +592,11 @@ function setStatus(id, status, y) {
 // 인라인 편집용 — 허용된 필드만 수정
 const EDITABLE_FIELDS = new Set(['비고', '수량', '예약상태', '수령여부']);
 
-function updateCell(id, field, value) {
+function updateCell(id, field, value, date) {
   if (!EDITABLE_FIELDS.has(field)) {
     throw new Error('수정이 허용되지 않은 필드: ' + field);
   }
-  const { sheet, rowIdx } = findRowById(id);
+  const { sheet, rowIdx } = findRowById(id, date);
   const headerIdx = Object.fromEntries(SCHEMA.map((h, i) => [h, i + 1]));
 
   if (field === '예약상태') {
@@ -627,19 +627,14 @@ function updateCell(id, field, value) {
   return getRow(sheet, rowIdx);
 }
 
-function findRowById(id) {
+function findRowById(id, date) {
+  if (!date) throw new Error('스냅샷(date)이 지정되지 않았습니다: ' + id);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const active = getActiveSnapshotDate();
-  if (active) {
-    const r = findInSheet(ss.getSheetByName(APP_STATUS_PREFIX + active), id);
-    if (r) return r;
-  }
-  const snaps = listSnapshots();
-  for (const d of snaps) {
-    const r = findInSheet(ss.getSheetByName(APP_STATUS_PREFIX + d), id);
-    if (r) return r;
-  }
-  throw new Error('예약번호를 찾을 수 없습니다: ' + id);
+  const sheet = ss.getSheetByName(APP_STATUS_PREFIX + date);
+  if (!sheet) throw new Error('스냅샷 탭을 찾을 수 없습니다: ' + date);
+  const r = findInSheet(sheet, id);
+  if (!r) throw new Error('예약번호를 찾을 수 없습니다: ' + id + ' (스냅샷: ' + date + ')');
+  return r;
 }
 
 function findInSheet(sheet, id) {

@@ -328,6 +328,11 @@ function refreshSnapshotPicker() {
   sel.disabled = false;
 }
 
+// 행의 실제 소속 스냅샷 (전역 모드에선 각 행의 _스냅샷, 개별 모드에선 ACTIVE_DATE)
+function snapshotOf(row) {
+  return row["_스냅샷"] || (ACTIVE_DATE !== "__ALL__" ? ACTIVE_DATE : null);
+}
+
 // ---------- 상태 변경 (API 호출) ----------
 async function setPickup(id, yes) {
   const prev = ROWS.find(r => r["예약번호"] === id);
@@ -341,7 +346,7 @@ async function setPickup(id, yes) {
   rerenderAll();
 
   try {
-    const r = await apiPost({ action: "pickup", id, state: yes });
+    const r = await apiPost({ action: "pickup", id, state: yes, date: snapshotOf(prev) });
     Object.assign(prev, normalize(r.row));
     rerenderAll();
     toast(yes ? "✓ 수령 처리됨" : "수령 취소됨", {
@@ -370,7 +375,7 @@ async function cancelReservation(id) {
   Object.assign(row, { "예약상태": "취소됨", "수령여부": "N" });
   rerenderAll();
   try {
-    const r = await apiPost({ action: "cancel", id });
+    const r = await apiPost({ action: "cancel", id, date: snapshotOf(row) });
     Object.assign(row, normalize(r.row));
     rerenderAll();
     toast("예약 취소됨", {
@@ -393,7 +398,7 @@ async function restoreReservation(id) {
   Object.assign(row, { "예약상태": "예약중", "수령여부": "N" });
   rerenderAll();
   try {
-    const r = await apiPost({ action: "restore", id });
+    const r = await apiPost({ action: "restore", id, date: snapshotOf(row) });
     Object.assign(row, normalize(r.row));
     rerenderAll();
     toast("예약 복원됨");
@@ -575,7 +580,7 @@ function renderLookup() {
     setBusy(true, "처리 중…");
     try {
       for (const it of targets) {
-        await apiPost({ action: "pickup", id: it["예약번호"], state: true });
+        await apiPost({ action: "pickup", id: it["예약번호"], state: true, date: snapshotOf(it) });
         Object.assign(it, { "수령여부": "Y", "예약상태": "수령완료", "수령일시": nowStamp(), "처리자": OPERATOR });
       }
       rerenderAll();
@@ -869,7 +874,7 @@ function renderSheet() {
 
       el.classList.add("saving");
       try {
-        const r = await apiPost({ action: "update", id, field, value: newVal });
+        const r = await apiPost({ action: "update", id, field, value: newVal, date: snapshotOf(row) });
         Object.assign(row, normalize(r.row));
         el.classList.remove("saving");
         el.classList.add("saved");
